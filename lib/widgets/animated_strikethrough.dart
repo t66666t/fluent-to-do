@@ -99,7 +99,7 @@ class _StrikethroughPainter extends CustomPainter {
     if (progress == 0) return;
 
     final paint = Paint()
-      ..color = color.withOpacity(0.6) // Slightly transparent like a pen
+      ..color = color.withValues(alpha: 0.6) // Slightly transparent like a pen
       ..strokeWidth = thickness
       ..strokeCap = StrokeCap.round // Rounded ends like a marker
       ..style = PaintingStyle.stroke;

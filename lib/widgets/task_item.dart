@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
 import 'animated_strikethrough.dart';
+import 'scale_button.dart';
+import 'step_wheel_picker.dart';
 
 enum AnimationMode { slide, vanish, pulse, none }
 
@@ -41,21 +42,33 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
   AnimationMode _mode = AnimationMode.none;
   
   // Configuration
-  static const double _completeThreshold = 60.0; // Right swipe threshold (reduced)
-  static const double _inProgressThreshold = 20.0; // Left swipe threshold (reduced for sensitivity)
-  
+  static const double _completeThreshold = 30.0; // Right swipe threshold
+  static const double _inProgressThreshold = 20.0; // Left swipe threshold
+
   // Completion "Pop" Animation
   late AnimationController _completionController;
   late Animation<double> _completionScaleAnimation;
-  bool _skipColorAnimation = false;
 
   // Haptic feedback state
   bool _hasVibratedComplete = false;
   bool _hasVibratedInProgress = false;
 
+  // Edit Mode
+  late TextEditingController _textController;
+  late FocusNode _focusNode;
+  bool _isEditingText = false;
+
+  // Step Counter Configuration
+  bool _isConfiguringSteps = false;
+  int _tempSteps = 1;
+
   @override
   void initState() {
     super.initState();
+    _textController = TextEditingController(text: widget.task.title);
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
+
     _controller = AnimationController(vsync: this);
     _heightController = AnimationController(
       vsync: this, 
@@ -78,9 +91,28 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     _animation = _controller.drive(Tween<Offset>(begin: Offset.zero, end: Offset.zero));
     _heightAnimation = CurvedAnimation(parent: _heightController, curve: Curves.easeInOut);
 
+    final provider = Provider.of<TaskProvider>(context, listen: false);
+    bool isNewTask = provider.newlyCreatedTaskId == widget.task.id;
+
     if (widget.animateEntry) {
       _runEntranceAnimation();
+    } else if (isNewTask) {
+       // New task animation: Expand height
+       _heightController.value = 0.0;
+       _heightController.forward();
     }
+    
+    // Check for auto-focus on new task
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (isNewTask) {
+         setState(() {
+            _isEditingText = true;
+         });
+         _focusNode.requestFocus();
+         provider.clearNewlyCreatedTaskId();
+      }
+    });
   }
 
   void _runEntranceAnimation() {
@@ -101,9 +133,45 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     });
   }
 
+  void _onFocusChange() {
+    if (!_focusNode.hasFocus && _isEditingText) {
+       _saveTitle();
+    }
+  }
+
+  void _saveTitle() {
+    final text = _textController.text.trim();
+    if (text.isNotEmpty) {
+      if (text != widget.task.title) {
+        Provider.of<TaskProvider>(context, listen: false)
+            .updateTaskTitle(widget.task.id, text);
+      }
+    } else {
+      // If empty:
+      // 1. If it was a new task (empty title originally), delete it (Undo/Cancel creation)
+      // 2. If it was an existing task, revert to old title
+      if (widget.task.title.isEmpty) {
+         Provider.of<TaskProvider>(context, listen: false)
+             .deleteTask(widget.task.id);
+      } else {
+         _textController.text = widget.task.title; // Revert if empty
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _isEditingText = false;
+      });
+    }
+  }
+
   @override
   void didUpdateWidget(TaskItem oldWidget) {
     super.didUpdateWidget(oldWidget);
+    
+    if (widget.task.title != oldWidget.task.title && !_isEditingText) {
+      _textController.text = widget.task.title;
+    }
+
     // If the task changes or its status changes (e.g. moved to completed list),
     // we must reset the swipe state to prevent "stuck" cards.
     if (widget.task.id != oldWidget.task.id) {
@@ -138,6 +206,10 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         _mode = AnimationMode.none;
         _hasVibratedComplete = false;
         _hasVibratedInProgress = false;
+        // Don't reset _isConfiguringSteps here unless we want to close it on update?
+        // Maybe keep it open if just status changed?
+        // If ID changed, we should reset.
+        // The checks above call _reset() on ID change.
       });
   }
 
@@ -146,6 +218,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     _controller.dispose();
     _heightController.dispose();
     _completionController.dispose();
+    _textController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -156,17 +230,17 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     _isSimulation = true;
     _mode = AnimationMode.slide;
     // A nice bouncy spring for return
-    // Adjusted for "silky" feel (lower stiffness, moderate damping)
+    // Adjusted for "silky" feel
     final simulation = SpringSimulation(
       const SpringDescription(
         mass: 1.0, 
-        stiffness: 120.0, // Softer spring
-        damping: 20.0, // Increased damping to prevent oscillation/jitter at end
+        stiffness: 120.0, 
+        damping: 20.0, 
       ),
       _dragExtent, // Start position (pixels)
       0.0, // End position (pixels)
       0.0, // Initial velocity
-      tolerance: const Tolerance(distance: 0.01, velocity: 0.01), // Tighter tolerance
+      tolerance: const Tolerance(distance: 0.01, velocity: 0.01),
     );
 
     _controller.animateWith(simulation).whenCompleteOrCancel(() {
@@ -179,100 +253,6 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     });
   }
 
-  void _runFlyOut(bool toRight) {
-    _isSimulation = false;
-    _mode = AnimationMode.slide;
-    
-    _controller.stop();
-    // Speed up the flyout slightly
-    _controller.duration = const Duration(milliseconds: 300);
-    
-    // Gap between the two "trains"
-    const double gap = 24.0; 
-    
-    // We want to slide until the incoming card (which is at left - (width + gap)) reaches 0.
-    // So we need to move the main card to (width + gap).
-    // The width here is the context width, but we should probably use the widget width.
-    // Since we are inside a full-width list item (mostly), context.size.width works.
-    final targetOffset = context.size!.width + gap;
-    
-    // Current offset (pixels)
-    final startOffset = _dragExtent;
-
-    // We animate from current pixel offset to target pixel offset.
-    // NOTE: Tween<Offset> usually takes relative values (0.0 - 1.0).
-    // BUT we are using pixel values in our Transform in build().
-    // So we need to normalize if we use the same Tween logic.
-    // Currently build() uses:
-    // if (_mode == AnimationMode.slide) currentOffset = _animation.value.dx * size.width;
-    // So _animation.value.dx should be relative.
-    
-    _animation = Tween<Offset>(
-      begin: Offset(startOffset / context.size!.width, 0.0),
-      end: Offset(targetOffset / context.size!.width, 0.0),
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-    
-    // Start flyout
-    _controller.forward().then((_) async {
-       if (mounted && toRight) {
-          // Animation done. 
-          // At this point, the "Incoming" card is at 0.0.
-          // The "Outgoing" card is at targetOffset (offscreen).
-          
-          // FLAG ON: Prevent color transition animation on the main card
-          _skipColorAnimation = true;
-          
-          // We immediately swap the state.
-          // Reset drag extent to 0 so the "Incoming" card (which becomes the main card) stays at 0.
-          
-          Provider.of<TaskProvider>(context, listen: false)
-             .updateTaskStatus(widget.task.id, TaskStatus.completed);
-             
-          // We need to reset the animation controller without triggering a reverse animation
-          _controller.value = 0.0;
-          _dragExtent = 0.0;
-          _mode = AnimationMode.none;
-          
-          // Trigger the "Pop" effect
-          _completionController.forward(from: 0.0);
-          HapticHelper.light(); // Secondary satisfaction click
-          
-          setState(() {});
-          
-          // FLAG OFF: Re-enable color animation for future interactions
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-             if (mounted) _skipColorAnimation = false;
-          });
-       }
-    });
-
-    // DO NOT collapse height.
-  }
-  
-  void _runVanish() {
-    setState(() {
-      _mode = AnimationMode.vanish;
-    });
-    
-    // Configure animations
-    _controller.stop();
-    _controller.duration = const Duration(milliseconds: 300); 
-    
-    _controller.forward().then((_) {
-       if (mounted) {
-         // Reset mode so it renders normally as completed
-         setState(() {
-            _mode = AnimationMode.none;
-            _controller.value = 0.0;
-         });
-       }
-    });
-
-    // Trigger state change. 
-    Provider.of<TaskProvider>(context, listen: false)
-        .updateTaskStatus(widget.task.id, TaskStatus.completed);
-  }
-  
   void _runPulse() {
     setState(() {
       _mode = AnimationMode.pulse;
@@ -289,174 +269,34 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        double currentOffset = _dragExtent;
-        double opacity = 1.0;
-        double scale = 1.0;
-        
-        // Calculate properties based on mode
-        if (_mode == AnimationMode.vanish) {
-           opacity = 1.0; 
-           scale = 1.0 - (_controller.value * 0.05);
-        } else if (_mode == AnimationMode.pulse) {
-           double val = _controller.value;
-           if (val < 0.5) {
-              scale = 1.0 + (val * 0.04);
-           } else {
-              scale = 1.02 - ((val - 0.5) * 0.04);
-           }
-           currentOffset = 0.0;
-        } else if (!_isDragging && _controller.isAnimating) {
-           // Slide / Flyout
-           if (_isSimulation) {
-              currentOffset = _controller.value;
-           } else if (_mode == AnimationMode.slide) {
-             currentOffset = _animation.value.dx * size.width;
-           }
-        }
-        
-        // "Two Trains" Logic
-        // We disabled the "Two Trains" visual for right swipe to match the requested "Spring Back" style.
-        // The code below is kept commented out in case we want to revert to "Fly Out" style later.
-        
-        /*
-        // Calculate the gap and width for the incoming card
-        // We use the full width for simplicity, matching the main card
-        const double gap = 24.0;
-        final double cardWidth = size.width; 
-        */
-
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            /*
-            // The "Incoming" Card (Train B)
-            // Only visible if we are dragging right or animating right
-            if (currentOffset > 0)
-              Positioned(
-                // It follows the main card with a gap
-                left: currentOffset - (cardWidth + gap),
-                top: 0,
-                bottom: 0,
-                width: cardWidth,
-                child: _buildCardContent(overrideStatus: TaskStatus.completed),
-              ),
-            */
-
-            // The "Outgoing" Card (Train A - Main Content)
-            Transform.translate(
-              offset: Offset(currentOffset, 0),
-              child: Transform.scale(
-                scale: scale,
-                child: Opacity(
-                  opacity: opacity,
-                  child: GestureDetector(
-                    onHorizontalDragStart: (details) {
-                      _controller.stop();
-                      setState(() {
-                        _isDragging = true;
-                        _dragExtent = currentOffset; // Continue from where we are
-                        _mode = AnimationMode.slide; // Force slide mode
-                      });
-                    },
-                    onHorizontalDragUpdate: (details) {
-                      setState(() {
-                        double delta = details.primaryDelta!;
-                        if (_dragExtent + delta < 0) {
-                           delta *= 0.5; 
-                        }
-                        _dragExtent += delta;
-
-                        // Haptic feedback logic for thresholds
-                        if (_dragExtent > _completeThreshold && !_hasVibratedComplete) {
-                           HapticHelper.medium();
-                           _hasVibratedComplete = true;
-                        } else if (_dragExtent <= _completeThreshold && _hasVibratedComplete) {
-                           _hasVibratedComplete = false;
-                        }
-
-                        if (_dragExtent < -_inProgressThreshold && !_hasVibratedInProgress) {
-                           HapticHelper.selection();
-                           _hasVibratedInProgress = true;
-                        } else if (_dragExtent >= -_inProgressThreshold && _hasVibratedInProgress) {
-                           _hasVibratedInProgress = false;
-                        }
-                      });
-                    },
-                    onHorizontalDragEnd: (details) {
-                      setState(() {
-                        _isDragging = false;
-                        _hasVibratedComplete = false;
-                        _hasVibratedInProgress = false;
-                      });
-                      
-                      if (_dragExtent > _completeThreshold) {
-                        // Already vibrated in update, but double check if we missed it (fast swipe)
-                        if (!_hasVibratedComplete) {
-                           HapticHelper.medium();
-                        }
-                        // OLD: _runFlyOut(true);
-                        // NEW: Imitate left swipe (Spring Back)
-                        
-                        Provider.of<TaskProvider>(context, listen: false)
-                             .updateTaskStatus(widget.task.id, TaskStatus.completed);
-                         
-                        // Trigger Pop effect for satisfaction
-                        _completionController.forward(from: 0.0);
-                         
-                        _runSpringBack();
-
-                      } else if (_dragExtent < -_inProgressThreshold) {
-                        // Already vibrated in update
-                        if (!_hasVibratedInProgress) {
-                           HapticHelper.selection();
-                        }
-                        
-                        final newStatus = widget.task.status == TaskStatus.inProgress
-                            ? TaskStatus.todo
-                            : TaskStatus.inProgress;
-
-                        Provider.of<TaskProvider>(context, listen: false)
-                            .updateTaskStatus(widget.task.id, newStatus);
-                        
-                        _runSpringBack();
-                      } else {
-                        _runSpringBack();
-                      }
-                    },
-                    onTap: () {
-                       if (widget.task.status == TaskStatus.todo) {
-                          // Todo -> InProgress
-                          HapticHelper.selection();
-                          Provider.of<TaskProvider>(context, listen: false)
-                             .updateTaskStatus(widget.task.id, TaskStatus.inProgress);
-                       } else if (widget.task.status == TaskStatus.inProgress) {
-                          // InProgress -> Completed
-                          HapticHelper.heavy();
-                          
-                          // Use simple status update, which triggers Pulse via didUpdateWidget
-                          Provider.of<TaskProvider>(context, listen: false)
-                             .updateTaskStatus(widget.task.id, TaskStatus.completed);
-                             
-                          // Also trigger the "Pop" checkmark effect for extra satisfaction
-                          _completionController.forward(from: 0.0);
-                       } else {
-                          // Completed -> Todo (Restore)
-                          HapticHelper.selection();
-                          Provider.of<TaskProvider>(context, listen: false)
-                             .updateTaskStatus(widget.task.id, TaskStatus.todo);
-                       }
-                    },
-                    child: _buildCardContent(),
-                  ),
-                ),
-              ),
+  void _showEditStepDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final controller = TextEditingController(text: _tempSteps.toString());
+        return AlertDialog(
+          title: const Text('Set Steps'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                final val = int.tryParse(controller.text);
+                if (val != null && val > 0) {
+                  setState(() {
+                    _tempSteps = val;
+                  });
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('OK'),
             ),
           ],
         );
@@ -464,24 +304,201 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     );
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final isEditMode = context.watch<TaskProvider>().isEditMode;
+
+    // Intercept Back Button if configuring
+    // PopScope is available in newer Flutter. If strict requirement is compatibility, check version.
+    // Env says 3.8.1 SDK, so PopScope is fine.
+    return PopScope(
+      canPop: !_isConfiguringSteps,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isConfiguringSteps) {
+          setState(() {
+            _isConfiguringSteps = false;
+          });
+        }
+      },
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          double currentOffset = _dragExtent;
+          double opacity = 1.0;
+          double scale = 1.0;
+          
+          if (_mode == AnimationMode.vanish) {
+             opacity = 1.0; 
+             scale = 1.0 - (_controller.value * 0.05);
+          } else if (_mode == AnimationMode.pulse) {
+             double val = _controller.value;
+             if (val < 0.5) {
+                scale = 1.0 + (val * 0.04);
+             } else {
+                scale = 1.02 - ((val - 0.5) * 0.04);
+             }
+             currentOffset = 0.0;
+          } else if (!_isDragging && _controller.isAnimating) {
+             if (_isSimulation) {
+                currentOffset = _controller.value;
+             } else if (_mode == AnimationMode.slide) {
+               currentOffset = _animation.value.dx * size.width;
+             }
+          }
+
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Transform.translate(
+                offset: Offset(currentOffset, 0),
+                child: Transform.scale(
+                  scale: scale,
+                  child: Opacity(
+                    opacity: opacity,
+                    child: GestureDetector(
+                      onHorizontalDragStart: (details) {
+                        _controller.stop();
+                        setState(() {
+                          _isDragging = true;
+                          _dragExtent = currentOffset;
+                          _mode = AnimationMode.slide;
+                        });
+                      },
+                      onHorizontalDragUpdate: (details) {
+                        setState(() {
+                          double delta = details.primaryDelta!;
+                          if (_dragExtent + delta < 0) {
+                             delta *= 0.5; 
+                          }
+                          _dragExtent += delta;
+
+                          // Haptic feedback logic
+                          if (_dragExtent > _completeThreshold && !_hasVibratedComplete) {
+                             HapticHelper.medium();
+                             _hasVibratedComplete = true;
+                          } else if (_dragExtent <= _completeThreshold && _hasVibratedComplete) {
+                             _hasVibratedComplete = false;
+                          }
+
+                          if (_dragExtent < -_inProgressThreshold && !_hasVibratedInProgress) {
+                             HapticHelper.selection();
+                             _hasVibratedInProgress = true;
+                          } else if (_dragExtent >= -_inProgressThreshold && _hasVibratedInProgress) {
+                             _hasVibratedInProgress = false;
+                          }
+                        });
+                      },
+                      onHorizontalDragEnd: (details) {
+                        setState(() {
+                          _isDragging = false;
+                          _hasVibratedComplete = false;
+                          _hasVibratedInProgress = false;
+                        });
+                        
+                        // RIGHT SWIPE Logic
+                        if (_dragExtent > _completeThreshold) {
+                          if (!_hasVibratedComplete) HapticHelper.medium();
+                          
+                          // Toggle Configuration Mode
+                          if (_isConfiguringSteps) {
+                             setState(() { _isConfiguringSteps = false; });
+                          } else {
+                             setState(() {
+                               _isConfiguringSteps = true;
+                               _tempSteps = widget.task.steps ?? 1;
+                             });
+                          }
+                          _runSpringBack();
+
+                        } else if (_dragExtent < -_inProgressThreshold) {
+                          // LEFT SWIPE Logic
+                          if (!_hasVibratedInProgress) HapticHelper.selection();
+                          
+                          if (widget.task.steps != null) {
+                             // Decrement Step
+                             Provider.of<TaskProvider>(context, listen: false)
+                                .decrementTaskStep(widget.task.id);
+                          } else {
+                             // Standard Logic
+                             final newStatus = widget.task.status == TaskStatus.inProgress
+                                 ? TaskStatus.todo
+                                 : TaskStatus.inProgress;
+                             Provider.of<TaskProvider>(context, listen: false)
+                                 .updateTaskStatus(widget.task.id, newStatus);
+                          }
+                          
+                          _runSpringBack();
+                        } else {
+                          _runSpringBack();
+                        }
+                      },
+                      onTap: () {
+                         if (isEditMode) {
+                            HapticHelper.selection();
+                            setState(() {
+                               _isEditingText = true;
+                            });
+                            _focusNode.requestFocus();
+                            return;
+                         }
+                         
+                         // If configuring steps, maybe close? Or ignore?
+                         // User says "Click cancel button or Swipe Right again or Back key".
+                         // Doesn't say Tap closes it. I'll leave it open on tap.
+                         if (_isConfiguringSteps) return;
+
+                         if (widget.task.steps != null) {
+                            // Step Logic
+                            HapticHelper.selection();
+                            Provider.of<TaskProvider>(context, listen: false)
+                                .incrementTaskStep(widget.task.id);
+                            return;
+                         }
+
+                         // Standard Logic
+                         if (widget.task.status == TaskStatus.todo) {
+                            HapticHelper.selection();
+                            Provider.of<TaskProvider>(context, listen: false)
+                               .updateTaskStatus(widget.task.id, TaskStatus.inProgress);
+                         } else if (widget.task.status == TaskStatus.inProgress) {
+                            HapticHelper.heavy();
+                            Provider.of<TaskProvider>(context, listen: false)
+                               .updateTaskStatus(widget.task.id, TaskStatus.completed);
+                            _completionController.forward(from: 0.0);
+                         } else {
+                            HapticHelper.selection();
+                            Provider.of<TaskProvider>(context, listen: false)
+                               .updateTaskStatus(widget.task.id, TaskStatus.todo);
+                         }
+                      },
+                      child: _buildCardContent(),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildCardContent({TaskStatus? overrideStatus}) {
-    // Use the override status if provided, otherwise use current task status
     final currentStatus = overrideStatus ?? widget.task.status;
     
     return SizeTransition(
       sizeFactor: _heightAnimation,
       axisAlignment: 0.0,
       child: Container(
-        // Reduced margin and padding for a more compact look
-        // If isRoot, match CategoryCard margin (bottom 12, horizontal 16)
-        // If not isRoot (inside category), use compact vertical (4)
         margin: widget.isRoot 
              ? const EdgeInsets.only(bottom: 12, left: 16, right: 16)
              : const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(widget.isRoot ? 16 : 12), // Root: 16, Inner: 12
+          borderRadius: BorderRadius.circular(widget.isRoot ? 16 : 12),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.05),
@@ -492,7 +509,6 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         ),
         child: Row(
           children: [
-            // Wrapper to ensure alignment with CategoryCard (24x24 icon)
             SizedBox(
                width: 24, 
                height: 24,
@@ -505,21 +521,45 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AnimatedStrikethrough(
-                    active: currentStatus == TaskStatus.completed,
-                    color: AppTheme.textSecondary,
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 200),
-                      style: AppTheme.bodyMedium.copyWith(
-                        color: currentStatus == TaskStatus.completed
-                            ? AppTheme.textSecondary
-                            : AppTheme.textPrimary,
-                        decoration: TextDecoration.none, // We use custom strikethrough
-                      ),
-                      child: Text(
-                        widget.task.title,
-                      ),
-                    ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: _isEditingText
+                        ? TextField(
+                            key: const ValueKey('editing'),
+                            controller: _textController,
+                            focusNode: _focusNode,
+                            onSubmitted: (_) => _saveTitle(),
+                            onTapOutside: (_) => _saveTitle(),
+                            style: AppTheme.bodyMedium.copyWith(
+                              color: AppTheme.textPrimary,
+                              decoration: TextDecoration.none,
+                            ),
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                              border: InputBorder.none,
+                            ),
+                          )
+                        : SizedBox(
+                            key: const ValueKey('text'),
+                            width: double.infinity,
+                            child: AnimatedStrikethrough(
+                              active: currentStatus == TaskStatus.completed,
+                              color: AppTheme.textSecondary,
+                              child: AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 200),
+                                style: AppTheme.bodyMedium.copyWith(
+                                  color: currentStatus == TaskStatus.completed
+                                      ? AppTheme.textSecondary
+                                      : AppTheme.textPrimary,
+                                  decoration: TextDecoration.none,
+                                ),
+                                child: Text(
+                                  widget.task.title,
+                                ),
+                              ),
+                            ),
+                          ),
                   ),
                   if (widget.showCategory && widget.task.category != null) ...[
                     const SizedBox(height: 4),
@@ -539,9 +579,193 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                 ],
               ),
             ),
+            
+            // Step Counter UI
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: Curves.easeOutCubic, // Smoother expansion
+              switchOutCurve: Curves.easeInCubic, // Smoother collapse
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                // Combine Slide and Fade for "Apple-style" reveal
+                return ClipRect(
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(1.0, 0.0), // Slide from right
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: FadeTransition(
+                      opacity: animation,
+                      child: SizeTransition(
+                        sizeFactor: animation,
+                        axis: Axis.horizontal,
+                        axisAlignment: -1.0, // Anchor left, expand right
+                        child: child,
+                      ),
+                    ),
+                  ),
+                );
+              },
+              child: _isConfiguringSteps
+                  ? SizedBox(
+                      height: 32, // Enforce fixed height to match badge
+                      child: _buildStepConfigRow(),
+                    )
+                  : (widget.task.steps != null
+                      ? SizedBox(
+                          height: 32, // Enforce fixed height
+                          child: _buildStepBadge(),
+                        )
+                      : const SizedBox.shrink()),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildStepConfigRow() {
+    return Container(
+      key: const ValueKey('config_row'),
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppTheme.textSecondary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 1. Step Wheel Picker (iOS Style)
+          StepWheelPicker(
+            initialValue: _tempSteps,
+            onChanged: (newValue) {
+              setState(() {
+                _tempSteps = newValue;
+              });
+            },
+          ),
+          // 2. Edit Button
+          ScaleButton(
+            onTap: _showEditStepDialog,
+            child: _buildCompactIconButtonContent(
+              icon: Icons.edit_rounded,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          // 3. Confirm Button
+          ScaleButton(
+            onTap: () {
+              Provider.of<TaskProvider>(context, listen: false)
+                  .setTaskSteps(widget.task.id, _tempSteps);
+              setState(() {
+                _isConfiguringSteps = false;
+              });
+              HapticHelper.medium();
+            },
+            child: _buildCompactIconButtonContent(
+              icon: Icons.check_rounded,
+              color: AppTheme.successColor,
+            ),
+          ),
+          // 4. Cancel Button
+          ScaleButton(
+            onTap: () {
+              setState(() {
+                _isConfiguringSteps = false;
+              });
+              HapticHelper.light();
+            },
+            child: _buildCompactIconButtonContent(
+              icon: Icons.close_rounded,
+              color: AppTheme.errorColor,
+            ),
+          ),
+          // 5. Disable Button
+          ScaleButton(
+            onTap: () {
+              Provider.of<TaskProvider>(context, listen: false)
+                  .setTaskSteps(widget.task.id, null);
+              setState(() {
+                _isConfiguringSteps = false;
+              });
+              HapticHelper.medium();
+            },
+            child: _buildCompactIconButtonContent(
+              icon: Icons.remove_circle_outline_rounded,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactIconButtonContent({
+    required IconData icon,
+    required Color color,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.all(5.0),
+      child: Icon(
+        icon,
+        size: 18,
+        color: color,
+      ),
+    );
+  }
+
+  Widget _buildStepBadge() {
+    return Padding(
+      key: const ValueKey('step_badge'),
+      padding: const EdgeInsets.only(left: 8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutBack,
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppTheme.primaryColor.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border:
+              Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3)),
+        ),
+        alignment: Alignment.center,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          transitionBuilder: (Widget child, Animation<double> animation) {
+            return ScaleTransition(
+              scale: animation,
+              child: FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
+            );
+          },
+          child: Text(
+            '${widget.task.currentStep}',
+            key: ValueKey<int>(widget.task.currentStep),
+            style: TextStyle(
+              color: AppTheme.primaryColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Helper widget for scale tap effect
+  // ignore: unused_element
+  Widget _buildCompactIconButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    // Legacy support, redirected to new structure if used elsewhere
+    return ScaleButton(
+      onTap: onPressed,
+      child: _buildCompactIconButtonContent(icon: icon, color: color),
     );
   }
 
@@ -559,13 +783,12 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         break;
     }
 
-    // Use ScaleTransition for the pop effect
     return ScaleTransition(
       scale: status == TaskStatus.completed 
           ? _completionScaleAnimation 
           : const AlwaysStoppedAnimation(1.0),
       child: AnimatedContainer(
-        duration: _skipColorAnimation ? Duration.zero : const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
         width: 12,
         height: 12,

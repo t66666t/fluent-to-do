@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
@@ -7,15 +7,19 @@ import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
 import 'task_item.dart';
 import 'animated_strikethrough.dart';
+import 'category_progress_badge.dart';
+import 'deletable_item_wrapper.dart';
 
 class CategoryCard extends StatefulWidget {
   final String? category; // null means "Uncategorized"
   final bool isCompleted; // Whether the entire category is "done"
+  final bool isDeleteMode;
 
   const CategoryCard({
     super.key,
     required this.category,
     this.isCompleted = false,
+    this.isDeleteMode = false,
   });
 
   @override
@@ -50,6 +54,7 @@ class _CategoryCardState extends State<CategoryCard> {
            titleStyle: titleStyle,
            isGlobalDragging: provider.isGlobalDragging,
            autoCollapse: provider.autoCollapseCategory,
+           isDeleteMode: widget.isDeleteMode,
         );
       },
     );
@@ -64,6 +69,7 @@ class _CategoryCardContent extends StatefulWidget {
   final TextStyle titleStyle;
   final bool isGlobalDragging;
   final bool autoCollapse;
+  final bool isDeleteMode;
 
   const _CategoryCardContent({
     required this.category,
@@ -73,6 +79,7 @@ class _CategoryCardContent extends StatefulWidget {
     required this.titleStyle,
     required this.isGlobalDragging,
     required this.autoCollapse,
+    required this.isDeleteMode,
   });
 
   @override
@@ -86,6 +93,12 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
   late Animation<double> _iconTurns;
   late Animation<double> _heightFactor;
 
+  // Delete Animation
+  late AnimationController _deleteController;
+  late Animation<double> _deleteScaleAnimation;
+  late Animation<double> _deleteFadeAnimation;
+  late Animation<double> _deleteSizeAnimation;
+
   @override
   void initState() {
     super.initState();
@@ -96,15 +109,39 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
     );
     _iconTurns = Tween<double>(begin: 0.0, end: 0.25).animate(_controller);
     _heightFactor = _controller.drive(CurveTween(curve: Curves.easeIn));
+
+    // Delete Animation Setup
+    _deleteController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      value: 0.0,
+    );
+    _deleteScaleAnimation = Tween<double>(begin: 1.0, end: 0.8).animate(
+      CurvedAnimation(parent: _deleteController, curve: Curves.easeOutCubic),
+    );
+    _deleteFadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _deleteController, curve: const Interval(0.0, 0.6, curve: Curves.easeOut)),
+    );
+    _deleteSizeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _deleteController, curve: const Interval(0.4, 1.0, curve: Curves.easeOut)),
+    );
     
     // Initial state check
-    // If autoCollapse is ON and category is done, start collapsed.
-    // If autoCollapse is OFF, we might want to default to expanded? 
-    // Or just keep it expanded unless user closed it?
-    // Current logic: if done, collapse.
-    // Adjusted logic: if done AND autoCollapse, collapse.
-    if (widget.isCategoryDone && widget.autoCollapse) {
-       _isExpanded = false;
+    final provider = Provider.of<TaskProvider>(context, listen: false);
+    final persistedState = provider.isCategoryExpanded(widget.category);
+    
+    if (persistedState != null) {
+       _isExpanded = persistedState;
+    } else {
+       // If autoCollapse is ON and category is done, start collapsed.
+       if (widget.isCategoryDone && widget.autoCollapse) {
+          _isExpanded = false;
+       } else {
+          _isExpanded = true;
+       }
+    }
+    
+    if (!_isExpanded) {
        _controller.value = 0.0;
     }
   }
@@ -130,20 +167,20 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
         // Drag Started: Save state and collapse
         _wasExpandedBeforeDrag = _isExpanded;
         if (_isExpanded) {
-           _toggleExpansion();
+           _toggleExpansion(save: false); // Don't save temp state
         }
       } else {
         // Drag Ended: Restore state
         // If it was expanded before drag, expand it back.
         // UNLESS it became done during drag? Unlikely.
         if (_wasExpandedBeforeDrag && !_isExpanded && !widget.isCategoryDone) {
-           _toggleExpansion();
+           _toggleExpansion(save: false); // Don't save temp state
         }
       }
     }
   }
 
-  void _toggleExpansion() {
+  void _toggleExpansion({bool save = true}) {
     HapticHelper.medium();
     setState(() {
       _isExpanded = !_isExpanded;
@@ -153,17 +190,48 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
         _controller.reverse();
       }
     });
+    
+    if (save) {
+      Provider.of<TaskProvider>(context, listen: false)
+        .setCategoryExpansion(widget.category, _isExpanded);
+    }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _deleteController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleDeleteCategory() async {
+    if (_deleteController.isAnimating || _deleteController.isCompleted) return;
+    HapticHelper.medium();
+    await _deleteController.forward();
+    if (mounted && widget.category != null) {
+      Provider.of<TaskProvider>(context, listen: false)
+          .deleteCategory(widget.category!);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedBuilder(
+      animation: _deleteController,
+      builder: (context, child) {
+         return SizeTransition(
+           sizeFactor: _deleteSizeAnimation,
+           axisAlignment: 0.0,
+           child: FadeTransition(
+             opacity: _deleteFadeAnimation,
+             child: ScaleTransition(
+               scale: _deleteScaleAnimation,
+               child: child,
+             ),
+           ),
+         );
+      },
+      child: Container(
           margin: const EdgeInsets.only(bottom: 12, left: 16, right: 16),
           decoration: BoxDecoration(
             color: Colors.white, 
@@ -183,79 +251,141 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
             mainAxisSize: MainAxisSize.min,
             children: [
               // Header
-              InkWell(
-                onTap: _toggleExpansion,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(16), bottom: Radius.circular(16)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                  child: Row(
-                    children: [
-                      // Category Icon/Indicator
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeOut,
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: widget.isCategoryDone ? AppTheme.successColor.withValues(alpha: 0.2) : AppTheme.primaryColor.withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          switchInCurve: Curves.easeOutBack,
-                          switchOutCurve: Curves.easeIn,
-                          transitionBuilder: (Widget child, Animation<double> animation) {
-                            return ScaleTransition(
-                              scale: animation,
-                              child: FadeTransition(
-                                opacity: animation,
-                                child: child,
+              Stack(
+                children: [
+                  // 1. Visual Header (Inactive for taps in delete mode via IgnorePointer, or handled below)
+                  // We use the existing InkWell but disable it in delete mode visually or functionally
+                  IgnorePointer(
+                    ignoring: widget.isDeleteMode,
+                    child: InkWell(
+                      onTap: _toggleExpansion,
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(16), bottom: Radius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                        child: Row(
+                          children: [
+                            // Category Icon/Indicator
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeOut,
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: widget.isCategoryDone ? AppTheme.successColor.withValues(alpha: 0.2) : AppTheme.primaryColor.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
                               ),
-                            );
-                          },
-                          child: Icon(
-                            widget.isCategoryDone ? Icons.check : (widget.category == null ? Icons.inbox : Icons.folder),
-                            key: ValueKey(widget.isCategoryDone),
-                            size: 14,
-                            color: widget.isCategoryDone ? AppTheme.successColor : AppTheme.primaryColor,
-                          ),
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 300),
+                                switchInCurve: Curves.easeOutBack,
+                                switchOutCurve: Curves.easeIn,
+                                transitionBuilder: (Widget child, Animation<double> animation) {
+                                  return ScaleTransition(
+                                    scale: animation,
+                                    child: FadeTransition(
+                                      opacity: animation,
+                                      child: child,
+                                    ),
+                                  );
+                                },
+                                child: Icon(
+                                  widget.isCategoryDone ? Icons.check : (widget.category == null ? Icons.inbox : Icons.folder),
+                                  key: ValueKey(widget.isCategoryDone),
+                                  size: 14,
+                                  color: widget.isCategoryDone ? AppTheme.successColor : AppTheme.primaryColor,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: AnimatedStrikethrough(
+                                active: widget.isCategoryDone,
+                                color: widget.headerColor,
+                                child: AnimatedDefaultTextStyle(
+                                  duration: const Duration(milliseconds: 200),
+                                  style: widget.titleStyle,
+                                  child: Text(
+                                    widget.category ?? "未分类",
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // Task Count Badge
+                            CategoryProgressBadge(tasks: widget.tasks),
+                            const SizedBox(width: 8),
+                            
+                            // Add Task Button
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () {
+                                  if (widget.isDeleteMode) return;
+                                  HapticHelper.selection();
+                                  // Add task
+                                  Provider.of<TaskProvider>(context, listen: false)
+                                      .addNewTaskToCategory(widget.category);
+      
+                                  // Ensure expanded
+                                  if (!_isExpanded) {
+                                    _toggleExpansion();
+                                  }
+                                },
+                                child: Container(
+                                  width: 28,
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryColor
+                                        .withValues(alpha: 0.1),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.add,
+                                    size: 18,
+                                    color: AppTheme.primaryColor,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            
+                            const SizedBox(width: 8),
+                            RotationTransition(
+                              turns: _iconTurns,
+                              child: const Icon(Icons.chevron_right, color: Colors.grey),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: AnimatedStrikethrough(
-                          active: widget.isCategoryDone,
-                          color: widget.headerColor,
-                          child: AnimatedDefaultTextStyle(
-                            duration: const Duration(milliseconds: 200),
-                            style: widget.titleStyle,
-                            child: Text(
-                              widget.category ?? "未分类",
+                    ),
+                  ),
+
+                  // 2. Delete Mode Overlay & Interaction
+                  if (widget.isDeleteMode)
+                    Positioned.fill(
+                      child: Row(
+                        children: [
+                          // Left Half: Delete Category
+                          Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _handleDeleteCategory,
+                              child: Container(color: Colors.transparent),
                             ),
                           ),
-                        ),
-                      ),
-                      // Task Count Badge
-                      if (widget.tasks.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
+                          // Right Half: Toggle Expansion
+                          Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _toggleExpansion,
+                              child: Container(color: Colors.transparent),
+                            ),
                           ),
-                          child: Text(
-                            "${widget.tasks.length}",
-                            style: AppTheme.bodySmall.copyWith(fontSize: 12),
-                          ),
-                        ),
-                      const SizedBox(width: 8),
-                      RotationTransition(
-                        turns: _iconTurns,
-                        child: const Icon(Icons.chevron_right, color: Colors.grey),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                    
+                  // 3. Delete Badge (Visual) - Removed
+
+                ],
               ),
               
               // Body
@@ -271,24 +401,69 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
                   child: widget.tasks.isEmpty 
                       ? const SizedBox.shrink()
                       : Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Column(
-                            children: widget.tasks.map((task) {
-                              return Padding(
-                                key: ValueKey(task.id),
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                child: TaskItem(
-                                  task: task,
-                                  showCategory: false,
-                                ),
-                              );
-                            }).toList(),
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: ReorderableListView(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              proxyDecorator: (child, index, animation) {
+                                return AnimatedBuilder(
+                                  animation: animation,
+                                  builder: (BuildContext context, Widget? child) {
+                                    final double animValue = Curves.easeInOut.transform(animation.value);
+                                    final double elevation = lerpDouble(0, 6, animValue)!;
+                                    final double scale = lerpDouble(1, 1.02, animValue)!;
+                                    return Transform.scale(
+                                      scale: scale,
+                                      child: Material(
+                                        elevation: elevation,
+                                        color: Colors.transparent,
+                                        shadowColor: Colors.black.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: child,
+                                      ),
+                                    );
+                                  },
+                                  child: child,
+                                );
+                              },
+                              onReorder: (oldIndex, newIndex) {
+                                Provider.of<TaskProvider>(context, listen: false)
+                                    .reorderCategoryTasks(widget.category, oldIndex, newIndex);
+                              },
+                              children: widget.tasks.map((task) {
+                                final item = Padding(
+                                  key: ValueKey(task.id),
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  child: TaskItem(
+                                    task: task,
+                                    showCategory: false,
+                                  ),
+                                );
+
+                                if (widget.isDeleteMode) {
+                                  return DeletableItemWrapper(
+                                    key: ValueKey("del_${task.id}"),
+                                    isDeleteMode: true,
+                                    onDelete: () => Provider.of<TaskProvider>(
+                                            context,
+                                            listen: false)
+                                        .deleteTask(task.id),
+                                    child: item,
+                                  );
+                                }
+                                return item;
+                              }).toList(),
                           ),
-                        ),
+                  ),
                 ),
               ),
             ],
           ),
-        );
+      ),
+    );
   }
+
+  // Badge removed
+
 }

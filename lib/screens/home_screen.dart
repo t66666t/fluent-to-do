@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'dart:ui';
 import 'todo_screen.dart';
 import 'timer_screen.dart';
 import '../providers/task_provider.dart';
@@ -15,14 +14,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   
-  late AnimationController _settingsController;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _fadeAnimation;
-  bool _isSettingsOpen = false;
-
   final List<Widget> _screens = [
     const TodoScreen(),
     const TimerScreen(),
@@ -31,53 +25,60 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _settingsController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-      reverseDuration: const Duration(milliseconds: 250),
-    );
-    
-    _scaleAnimation = CurvedAnimation(
-      parent: _settingsController,
-      curve: Curves.easeOutBack,
-      reverseCurve: Curves.easeInBack,
-    );
-    
-    _fadeAnimation = CurvedAnimation(
-      parent: _settingsController,
-      curve: Curves.easeOut,
-    );
   }
   
   @override
   void dispose() {
-    _settingsController.dispose();
     super.dispose();
   }
   
   void _toggleSettings() {
     HapticHelper.light();
-    if (_isSettingsOpen) {
-      _settingsController.reverse();
-      setState(() {
-        _isSettingsOpen = false;
-      });
-    } else {
-      setState(() {
-        _isSettingsOpen = true;
-      });
-      _settingsController.forward();
-    }
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        pageBuilder: (ctx, anim, secAnim) => const SettingsDialog(),
+        transitionsBuilder: (ctx, anim, secAnim, child) {
+          return FadeTransition(
+            opacity: anim,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.95, end: 1.0).animate(
+                CurvedAnimation(parent: anim, curve: Curves.easeOutQuart),
+              ),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     // Watch provider to update UI when delete mode changes
-    final isDeleteMode = context.watch<TaskProvider>().isDeleteMode;
+    final taskProvider = context.watch<TaskProvider>();
+    final isDeleteMode = taskProvider.isDeleteMode;
+    final isEditMode = taskProvider.isEditMode;
+    final canUndo = taskProvider.canUndo;
 
-    return Stack(
-      children: [
-        Scaffold(
+    return PopScope(
+      canPop: !isDeleteMode && !isEditMode,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+
+        if (isDeleteMode) {
+          context.read<TaskProvider>().setDeleteMode(false);
+          return;
+        }
+
+        if (isEditMode) {
+          context.read<TaskProvider>().toggleEditMode();
+          return;
+        }
+      },
+      child: Stack(
+        children: [
+          Scaffold(
           appBar: AppBar(
             title: Text(
               _currentIndex == 0 ? '我的任务' : '专注计时',
@@ -86,14 +87,64 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             centerTitle: false,
             actions: [
               if (_currentIndex == 0) ...[
+                // Undo Button
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOutBack,
+                  child: (isDeleteMode && canUndo)
+                      ? IconButton(
+                          icon: const Icon(Icons.undo, color: AppTheme.textPrimary),
+                          onPressed: () {
+                            HapticHelper.medium();
+                            context.read<TaskProvider>().undoLastDelete();
+                          },
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                // Delete Button
                 IconButton(
-                  icon: Icon(
-                    isDeleteMode ? Icons.delete : Icons.delete_outline,
-                    color: isDeleteMode ? AppTheme.errorColor : Colors.black54,
+                  icon: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    transitionBuilder: (child, anim) {
+                       return ScaleTransition(
+                         scale: anim, 
+                         child: child
+                       );
+                    },
+                    switchInCurve: Curves.elasticOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: Icon(
+                      isDeleteMode ? Icons.delete : Icons.delete_outline,
+                      key: ValueKey('del_$isDeleteMode'),
+                      color: isDeleteMode ? AppTheme.errorColor : Colors.black54,
+                    ),
                   ),
                   onPressed: () {
                     HapticHelper.medium();
                     context.read<TaskProvider>().toggleDeleteMode();
+                  },
+                ),
+                // Edit Button
+                IconButton(
+                  icon: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    transitionBuilder: (child, anim) {
+                       return ScaleTransition(
+                         scale: anim, 
+                         child: child
+                       );
+                    },
+                    switchInCurve: Curves.elasticOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: Icon(
+                      isEditMode ? Icons.edit : Icons.edit_outlined,
+                      key: ValueKey('edit_$isEditMode'),
+                      color: isEditMode ? AppTheme.primaryColor : Colors.black54,
+                    ),
+                  ),
+                  onPressed: () {
+                    HapticHelper.medium();
+                    context.read<TaskProvider>().toggleEditMode();
                   },
                 ),
                 Padding(
@@ -132,67 +183,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ],
           ),
         ),
-        
-        // Custom Settings Overlay
-        AnimatedBuilder(
-          animation: _settingsController,
-          builder: (context, child) {
-            if (_settingsController.status == AnimationStatus.dismissed && !_isSettingsOpen) {
-              return const SizedBox.shrink();
-            }
-            
-            return Stack(
-               children: [
-                 // 1. Full Screen Blur & Dimming (Click to close)
-                 Positioned.fill(
-                   child: FadeTransition(
-                     opacity: _fadeAnimation,
-                     child: GestureDetector(
-                       onTap: _toggleSettings,
-                       behavior: HitTestBehavior.opaque,
-                       child: BackdropFilter(
-                         filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                         child: Container(
-                           color: Colors.black.withValues(alpha: 0.2),
-                         ),
-                       ),
-                     ),
-                   ),
-                 ),
-                 
-                 // 2. Settings Dialog
-                 Positioned.fill(
-                   child: Center(
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: FadeTransition(
-                          opacity: _fadeAnimation,
-                          child: SettingsDialog(
-                            onClose: _toggleSettings,
-                          ),
-                        ),
-                      ),
-                    ),
-                 ),
-                 
-                 // 3. Fake Toggle Button (Keeps interaction alive)
-                if (_currentIndex == 0)
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 4, // Center vertically in standard AppBar (56-48)/2 = 4
-                    right: 16,
-                    child: FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: IconButton(
-                        icon: const Icon(Icons.settings, color: Colors.black54),
-                        onPressed: _toggleSettings,
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
       ],
+      ),
     );
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../utils/haptic_helper.dart';
 
 class TimerScreen extends StatelessWidget {
   const TimerScreen({super.key});

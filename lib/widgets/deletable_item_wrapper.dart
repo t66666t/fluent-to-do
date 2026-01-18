@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 import '../utils/haptic_helper.dart';
-import '../theme/app_theme.dart';
+
 
 class DeletableItemWrapper extends StatefulWidget {
   final Widget child;
   final bool isDeleteMode;
   final VoidCallback onDelete;
+  final bool enableSplitTap;
+  final bool disableInteraction;
 
   const DeletableItemWrapper({
     super.key,
     required this.child,
     required this.isDeleteMode,
     required this.onDelete,
+    this.enableSplitTap = false,
+    this.disableInteraction = false,
   });
 
   @override
@@ -29,11 +33,12 @@ class _DeletableItemWrapperState extends State<DeletableItemWrapper> with Single
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 200),
+      value: 0.0,
     );
     
     _scaleAnimation = Tween<double>(begin: 1.0, end: 0.8).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
     
     _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
@@ -85,32 +90,40 @@ class _DeletableItemWrapperState extends State<DeletableItemWrapper> with Single
         children: [
           // Content
           // We use IgnorePointer to disable interaction with the card content in delete mode
+          // unless split tap is enabled (then we only ignore left side via overlay)
           IgnorePointer(
-            ignoring: widget.isDeleteMode,
+            ignoring: widget.isDeleteMode && !widget.enableSplitTap,
             child: widget.child,
           ),
 
           // Delete Mode Overlay & Interaction
-          if (widget.isDeleteMode)
+          if (widget.isDeleteMode && !widget.disableInteraction)
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _handleDelete,
-                child: Container(
-                  color: Colors.transparent, // Hit test target
-                  child: Stack(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    fit: StackFit.expand,
                     children: [
-                      // Visual indicator: Shake or badge
-                      // We place a small badge to the left of the content
-                      // Assuming content has ~16px left margin
+                      // Interaction Zone
                       Positioned(
-                        left: 4,
-                        top: 12, // Align with header text roughly
-                        child: _buildDeleteBadge(),
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: widget.enableSplitTap ? constraints.maxWidth * 0.5 : constraints.maxWidth,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _handleDelete,
+                          child: Container(
+                            color: Colors.transparent, // Hit test target
+                          ),
+                        ),
                       ),
+                      
+                      // Badge removed
+
                     ],
-                  ),
-                ),
+                  );
+                },
               ),
             ),
         ],
@@ -118,29 +131,6 @@ class _DeletableItemWrapperState extends State<DeletableItemWrapper> with Single
     );
   }
 
-  Widget _buildDeleteBadge() {
-    return Container(
-      width: 20,
-      height: 20,
-      decoration: BoxDecoration(
-        color: AppTheme.errorColor,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: const Center(
-        child: Icon(
-          Icons.remove,
-          color: Colors.white,
-          size: 14,
-        ),
-      ),
-    );
-  }
+  // Badge removed
+
 }

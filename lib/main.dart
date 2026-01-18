@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'providers/task_provider.dart';
+import 'providers/rule_provider.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -18,7 +19,12 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => TaskProvider()),
+        ChangeNotifierProvider(create: (_) => RuleProvider()),
+        ChangeNotifierProxyProvider<RuleProvider, TaskProvider>(
+          create: (_) => TaskProvider(),
+          update: (_, ruleProvider, taskProvider) =>
+              taskProvider!..updateRuleProvider(ruleProvider),
+        ),
       ],
       child: MaterialApp(
         title: 'Fluent ToDo',

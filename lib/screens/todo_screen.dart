@@ -46,10 +46,10 @@ class TodoScreen extends StatelessWidget {
                          final double elevation = lerpDouble(0, 6, animValue)!;
                          return Material(
                            elevation: elevation,
-                           color: Colors.transparent,
-                           shadowColor: Colors.black.withOpacity(0.1),
-                           borderRadius: BorderRadius.circular(16),
-                           child: child,
+                          color: Colors.transparent,
+                          shadowColor: Colors.black.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(16),
+                          child: child,
                          );
                        },
                        child: child,
@@ -74,12 +74,9 @@ class TodoScreen extends StatelessWidget {
                       return ReorderableDelayedDragStartListener(
                         key: ValueKey("cat:$item"),
                         index: index,
-                        child: DeletableItemWrapper(
+                        child: CategoryCard(
+                          category: item,
                           isDeleteMode: isDeleteMode,
-                          onDelete: () => taskProvider.deleteCategory(item),
-                          child: CategoryCard(
-                            category: item,
-                          ),
                         ),
                       );
                     } else if (item is Task) {
