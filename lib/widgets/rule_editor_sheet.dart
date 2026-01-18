@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task_rule.dart';
 import '../providers/rule_provider.dart';
+import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
 
@@ -128,23 +129,29 @@ class _RuleEditorSheetState extends State<RuleEditorSheet> {
               if (_contentController.text.isNotEmpty) {
                 HapticHelper.heavy();
                 final provider = Provider.of<RuleProvider>(context, listen: false);
+                final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+                
                 final name = _nameController.text.isNotEmpty 
                     ? _nameController.text 
                     : (isEditing ? widget.initialRule!.name : null);
 
                 if (isEditing) {
-                  provider.updateRule(
+                  final updatedRule = provider.updateRule(
                     widget.initialRule!.id,
                     _contentController.text,
                     _selectedDays,
                     name: name,
                   );
+                  if (updatedRule != null) {
+                    taskProvider.forceApplyRule(updatedRule);
+                  }
                 } else {
-                  provider.addRule(
+                  final newRule = provider.addRule(
                     _contentController.text,
                     _selectedDays,
                     name: name,
                   );
+                  taskProvider.forceApplyRule(newRule);
                 }
                 Navigator.pop(context);
               } else {

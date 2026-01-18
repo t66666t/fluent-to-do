@@ -240,9 +240,11 @@ class RuleManagementDialog extends StatelessWidget {
                   onChanged: (val) {
                     HapticHelper.selection();
                     provider.toggleRule(rule.id);
-                    if (!val) {
-                      // Rule disabled, retract tasks
-                      Provider.of<TaskProvider>(context, listen: false).retractTasksForRule(rule.id);
+                    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+                    if (val) {
+                       taskProvider.forceApplyRule(rule);
+                    } else {
+                       taskProvider.retractTasksForRule(rule.id);
                     }
                   },
                 ),

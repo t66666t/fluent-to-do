@@ -55,6 +55,7 @@ class _CategoryCardState extends State<CategoryCard> {
            isGlobalDragging: provider.isGlobalDragging,
            autoCollapse: provider.autoCollapseCategory,
            isDeleteMode: widget.isDeleteMode,
+           isEditMode: provider.isEditMode,
         );
       },
     );
@@ -70,6 +71,7 @@ class _CategoryCardContent extends StatefulWidget {
   final bool isGlobalDragging;
   final bool autoCollapse;
   final bool isDeleteMode;
+  final bool isEditMode;
 
   const _CategoryCardContent({
     required this.category,
@@ -80,6 +82,7 @@ class _CategoryCardContent extends StatefulWidget {
     required this.isGlobalDragging,
     required this.autoCollapse,
     required this.isDeleteMode,
+    required this.isEditMode,
   });
 
   @override
@@ -98,6 +101,11 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
   late Animation<double> _deleteScaleAnimation;
   late Animation<double> _deleteFadeAnimation;
   late Animation<double> _deleteSizeAnimation;
+
+  // Edit Mode
+  late TextEditingController _textController;
+  late FocusNode _focusNode;
+  bool _isEditingText = false;
 
   @override
   void initState() {
@@ -125,6 +133,11 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
     _deleteSizeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _deleteController, curve: const Interval(0.4, 1.0, curve: Curves.easeOut)),
     );
+
+    // Edit Mode Setup
+    _textController = TextEditingController(text: widget.category ?? "未分类");
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
     
     // Initial state check
     final provider = Provider.of<TaskProvider>(context, listen: false);
@@ -150,6 +163,20 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
   void didUpdateWidget(_CategoryCardContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     
+    // Update text controller if category changes externally
+    if (widget.category != oldWidget.category) {
+      if (!_isEditingText) {
+        _textController.text = widget.category ?? "未分类";
+      }
+    }
+
+    // Auto-exit text editing if global edit mode is turned off
+    if (!widget.isEditMode && oldWidget.isEditMode) {
+      if (_isEditingText) {
+        _saveCategoryName();
+      }
+    }
+
     // Auto-collapse logic from status change
     // Only if autoCollapse is true
     if (widget.autoCollapse) {
@@ -197,10 +224,43 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
     }
   }
 
+  void _onFocusChange() {
+    if (!_focusNode.hasFocus && _isEditingText) {
+      _saveCategoryName();
+    }
+  }
+
+  void _saveCategoryName() {
+    final newName = _textController.text.trim();
+    final oldName = widget.category;
+    
+    // Check if changed
+    // Note: widget.category can be null (Uncategorized).
+    // If text is "未分类" (default for null), and widget.category is null, no change.
+    // If text is "Something" and widget.category is null, changed.
+    final currentDisplayName = oldName ?? "未分类";
+    
+    if (newName.isNotEmpty && newName != currentDisplayName) {
+       Provider.of<TaskProvider>(context, listen: false)
+           .updateCategoryName(oldName, newName);
+    } else if (newName.isEmpty) {
+      _textController.text = currentDisplayName; // Revert
+    }
+
+    if (mounted) {
+      setState(() {
+        _isEditingText = false;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     _deleteController.dispose();
+    _textController.dispose();
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -258,7 +318,19 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
                   IgnorePointer(
                     ignoring: widget.isDeleteMode,
                     child: InkWell(
-                      onTap: _toggleExpansion,
+                      onTap: () {
+                        if (widget.isEditMode) {
+                          if (_isEditingText) return;
+                          setState(() {
+                             _isEditingText = true;
+                          });
+                          _textController.text = widget.category ?? "未分类";
+                          _focusNode.requestFocus();
+                          HapticHelper.medium();
+                        } else {
+                          _toggleExpansion();
+                        }
+                      },
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(16), bottom: Radius.circular(16)),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
@@ -297,16 +369,52 @@ class _CategoryCardContentState extends State<_CategoryCardContent> with SingleT
                             ),
                             const SizedBox(width: 12),
                             Expanded(
-                              child: AnimatedStrikethrough(
-                                active: widget.isCategoryDone,
-                                color: widget.headerColor,
-                                child: AnimatedDefaultTextStyle(
-                                  duration: const Duration(milliseconds: 200),
-                                  style: widget.titleStyle,
-                                  child: Text(
-                                    widget.category ?? "未分类",
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 250),
+                                layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
+                                  return Stack(
+                                    alignment: Alignment.centerLeft,
+                                    children: <Widget>[
+                                      ...previousChildren,
+                                      if (currentChild != null) currentChild,
+                                    ],
+                                  );
+                                },
+                                transitionBuilder: (child, animation) => FadeTransition(
+                                  opacity: animation,
+                                  child: SizeTransition(
+                                    sizeFactor: animation,
+                                    axis: Axis.horizontal,
+                                    axisAlignment: -1.0,
+                                    child: child,
                                   ),
                                 ),
+                                child: _isEditingText
+                                    ? TextField(
+                                        controller: _textController,
+                                        focusNode: _focusNode,
+                                        style: widget.titleStyle.copyWith(decoration: TextDecoration.none),
+                                        textAlign: TextAlign.start,
+                                        decoration: const InputDecoration(
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                        onSubmitted: (_) => _saveCategoryName(),
+                                      )
+                                    : AnimatedStrikethrough(
+                                        active: widget.isCategoryDone,
+                                        color: widget.headerColor,
+                                        child: AnimatedDefaultTextStyle(
+                                          duration: const Duration(milliseconds: 200),
+                                          style: widget.titleStyle,
+                                          textAlign: TextAlign.start,
+                                          child: Text(
+                                            widget.category ?? "未分类",
+                                            textAlign: TextAlign.start,
+                                          ),
+                                        ),
+                                      ),
                               ),
                             ),
                             // Task Count Badge

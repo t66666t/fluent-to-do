@@ -65,18 +65,21 @@ class _AnimatedStrikethroughState extends State<AnimatedStrikethrough>
       alignment: Alignment.centerLeft,
       children: [
         widget.child,
-        AnimatedBuilder(
-          animation: _animation,
-          builder: (context, child) {
-            return CustomPaint(
-              painter: _StrikethroughPainter(
-                progress: _animation.value,
-                color: widget.color,
-                thickness: widget.thickness,
-              ),
-              child: widget.child, // Use child for size, but don't paint it again
-            );
-          },
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _animation,
+              builder: (context, child) {
+                return CustomPaint(
+                  painter: _StrikethroughPainter(
+                    progress: _animation.value,
+                    color: widget.color,
+                    thickness: widget.thickness,
+                  ),
+                );
+              },
+            ),
+          ),
         ),
       ],
     );

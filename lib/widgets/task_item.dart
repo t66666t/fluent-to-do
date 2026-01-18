@@ -540,26 +540,30 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                               border: InputBorder.none,
                             ),
                           )
-                        : SizedBox(
-                            key: const ValueKey('text'),
-                            width: double.infinity,
-                            child: AnimatedStrikethrough(
-                              active: currentStatus == TaskStatus.completed,
-                              color: AppTheme.textSecondary,
-                              child: AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 200),
-                                style: AppTheme.bodyMedium.copyWith(
-                                  color: currentStatus == TaskStatus.completed
-                                      ? AppTheme.textSecondary
-                                      : AppTheme.textPrimary,
-                                  decoration: TextDecoration.none,
+                        : Row(
+                              key: const ValueKey('text'),
+                              mainAxisSize: MainAxisSize.min, // Use min size to wrap text tightly
+                              children: [
+                                Flexible( // Allow wrapping if needed, but here we want strikethrough to fit text width
+                                  child: AnimatedStrikethrough(
+                                    active: currentStatus == TaskStatus.completed,
+                                    color: AppTheme.textSecondary,
+                                    child: AnimatedDefaultTextStyle(
+                                      duration: const Duration(milliseconds: 200),
+                                      style: AppTheme.bodyMedium.copyWith(
+                                        color: currentStatus == TaskStatus.completed
+                                            ? AppTheme.textSecondary
+                                            : AppTheme.textPrimary,
+                                        decoration: TextDecoration.none,
+                                      ),
+                                      child: Text(
+                                        widget.task.title,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                                child: Text(
-                                  widget.task.title,
-                                ),
-                              ),
+                              ],
                             ),
-                          ),
                   ),
                   if (widget.showCategory && widget.task.category != null) ...[
                     const SizedBox(height: 4),

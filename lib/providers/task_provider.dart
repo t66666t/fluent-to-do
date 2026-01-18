@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';import '../models/task.dart';
+import '../models/task_rule.dart';
 import 'rule_provider.dart';
 import '../utils/haptic_helper.dart';
 
@@ -22,7 +23,23 @@ class TaskProvider with ChangeNotifier {
 
   
   // Mixed list order: "cat:CategoryName" or "task:TaskID"
-  List<String> _homeDisplayOrder = [];
+  // NOW: Per-Date Display Order
+  // Key: "yyyy-MM-dd", Value: List<String> of IDs
+  final Map<String, List<String>> _dailyDisplayOrders = {};
+  
+  // Helper to get consistent date key
+  String _getDateKey(DateTime date) {
+    return "${date.year}-${date.month}-${date.day}";
+  }
+
+  // Helper to get current date's display order (mutable list ref)
+  List<String> get _currentDisplayOrder {
+    final key = _getDateKey(_selectedDate);
+    if (!_dailyDisplayOrders.containsKey(key)) {
+      _dailyDisplayOrders[key] = [];
+    }
+    return _dailyDisplayOrders[key]!;
+  }
   
   // Track dates where user manually cleared tasks or wants to suppress default rules
   final Set<String> _clearedDates = {};
@@ -167,6 +184,11 @@ class TaskProvider with ChangeNotifier {
     if (_undoStack.isEmpty) return;
     
     final op = _undoStack.removeLast();
+    final dateKey = _getDateKey(_selectedDate); // Assume undo happens on same day
+    final currentOrder = _dailyDisplayOrders[dateKey] ?? [];
+    if (!_dailyDisplayOrders.containsKey(dateKey)) {
+        _dailyDisplayOrders[dateKey] = currentOrder;
+    }
     
     if (op.type == 'task') {
       final task = op.data as Task;
@@ -176,9 +198,9 @@ class TaskProvider with ChangeNotifier {
       // We try to insert at original index, but clamp to bounds
       int insertIndex = op.originalIndex;
       if (insertIndex < 0) insertIndex = 0;
-      if (insertIndex > _homeDisplayOrder.length) insertIndex = _homeDisplayOrder.length;
+      if (insertIndex > currentOrder.length) insertIndex = currentOrder.length;
       
-      _homeDisplayOrder.insert(insertIndex, "task:${task.id}");
+      currentOrder.insert(insertIndex, "task:${task.id}");
       
     } else if (op.type == 'category') {
       final backup = op.data as CategoryBackup;
@@ -189,9 +211,9 @@ class TaskProvider with ChangeNotifier {
       // Restore category to display order
       int insertIndex = op.originalIndex;
       if (insertIndex < 0) insertIndex = 0;
-      if (insertIndex > _homeDisplayOrder.length) insertIndex = _homeDisplayOrder.length;
+      if (insertIndex > currentOrder.length) insertIndex = currentOrder.length;
       
-      _homeDisplayOrder.insert(insertIndex, "cat:${backup.name}");
+      currentOrder.insert(insertIndex, "cat:${backup.name}");
     }
     
     _saveTasks();
@@ -203,7 +225,10 @@ class TaskProvider with ChangeNotifier {
     if (taskIndex == -1) return;
     
     final task = _tasks[taskIndex];
-    final displayOrderIndex = _homeDisplayOrder.indexOf("task:$id");
+    final dateKey = _getDateKey(task.date);
+    final currentOrder = _dailyDisplayOrders[dateKey] ?? [];
+
+    final displayOrderIndex = currentOrder.indexOf("task:$id");
     
     // Record for undo
     _undoStack.add(DeleteOperation('task', task, displayOrderIndex));
@@ -213,10 +238,10 @@ class TaskProvider with ChangeNotifier {
     
     // Remove from display order
     if (displayOrderIndex != -1) {
-       _homeDisplayOrder.removeAt(displayOrderIndex);
+       currentOrder.removeAt(displayOrderIndex);
     } else {
        // Should not happen for uncategorized tasks, but just in case
-       _homeDisplayOrder.removeWhere((item) => item == "task:$id");
+       currentOrder.removeWhere((item) => item == "task:$id");
     }
     
     // Clean up animation states
@@ -230,11 +255,15 @@ class TaskProvider with ChangeNotifier {
   }
 
   void deleteCategory(String category) {
-    // 1. Find tasks to delete to track their IDs
-    final tasksToDelete = _tasks.where((t) => t.category == category).toList();
+    // 1. Find tasks to delete to track their IDs (ONLY for current date)
+    final tasksToDelete = _tasks.where((t) => 
+        t.category == category && isSameDay(t.date, _selectedDate)
+    ).toList();
+    
     final taskIdsToDelete = tasksToDelete.map((t) => "task:${t.id}").toSet();
     
-    final displayOrderIndex = _homeDisplayOrder.indexOf("cat:$category");
+    final currentOrder = _currentDisplayOrder;
+    final displayOrderIndex = currentOrder.indexOf("cat:$category");
     
     // Record for undo
     _undoStack.add(DeleteOperation(
@@ -243,38 +272,21 @@ class TaskProvider with ChangeNotifier {
       displayOrderIndex
     ));
     
-    // 2. Remove tasks from the main list
-    _tasks.removeWhere((t) => t.category == category);
+    // 2. Remove tasks from the main list (ONLY for current date)
+    _tasks.removeWhere((t) => 
+        t.category == category && isSameDay(t.date, _selectedDate)
+    );
     
-    // 3. Remove category and its tasks from display order
-    // Note: tasks inside category are usually not in _homeDisplayOrder, 
-    // but just in case some logic put them there.
+    // 3. Remove category and its tasks from display order (ONLY for current date)
     if (displayOrderIndex != -1) {
-       _homeDisplayOrder.removeAt(displayOrderIndex);
+       currentOrder.removeAt(displayOrderIndex);
     }
-    _homeDisplayOrder.removeWhere((item) => 
+    currentOrder.removeWhere((item) => 
       item == "cat:$category" || taskIdsToDelete.contains(item)
     );
 
-    // We can pick any task from deleted ones to check the date, as they should be from same view context?
-    // Actually tasksToDelete contains all tasks of that category for the selected date (context is selected date usually)
-    // Wait, deleteCategory logic above: _tasks.where((t) => t.category == category)
-    // This finds ALL tasks of that category across ALL dates if category is unique globally?
-    // BUT Task structure has 'date'. 
-    // In this app, categories seem to be just strings.
-    // If I delete "Work" category, do I delete it for ALL days or just today?
-    // Looking at deleteCategory impl:
-    // final tasksToDelete = _tasks.where((t) => t.category == category).toList();
-    // It deletes ALL tasks with that category name from entire DB.
-    // This might be intended behavior for "Delete Category".
-    // If so, we need to check if any affected date became empty.
-    
-    // However, the user request is about "modifying or deleting all categories in a date with default tasks".
-    // If the user deletes a category that was part of today's default rules, we should check if today became empty.
-    
-    // Let's check the currently selected date, as user operations happen there.
     _checkIfDateCleared(_selectedDate);
-
+    
     _saveTasks();
     notifyListeners();
   }
@@ -435,6 +447,42 @@ class TaskProvider with ChangeNotifier {
       _saveTasks();
       notifyListeners();
     }
+  }
+
+  void updateCategoryName(String? oldName, String newName) {
+    if (oldName == newName) return;
+
+    // 1. Update tasks (Global rename still makes sense for conceptual category rename)
+    for (var i = 0; i < _tasks.length; i++) {
+      if (_tasks[i].category == oldName) {
+        _tasks[i] = _tasks[i].copyWith(category: newName);
+      }
+    }
+
+    // 2. Update display order (In ALL dates, as this is a rename)
+    final oldKeyStr = "cat:$oldName"; 
+    final newKeyStr = "cat:$newName";
+    
+    _dailyDisplayOrders.forEach((dateKey, orderList) {
+       final index = orderList.indexOf(oldKeyStr);
+       if (index != -1) {
+         orderList[index] = newKeyStr;
+       }
+    });
+
+    // 3. Update expansion states
+    // Key used in setCategoryExpansion is: category ?? "__uncategorized__"
+    final oldExpKey = oldName ?? "__uncategorized__";
+    final newExpKey = newName; // New name is never null here
+    
+    if (_categoryExpansionStates.containsKey(oldExpKey)) {
+      final wasExpanded = _categoryExpansionStates[oldExpKey]!;
+      _categoryExpansionStates.remove(oldExpKey);
+      _categoryExpansionStates[newExpKey] = wasExpanded;
+    }
+
+    _saveTasks();
+    notifyListeners();
   }
 
   void setTaskSteps(String id, int? steps) {
@@ -599,7 +647,8 @@ class TaskProvider with ChangeNotifier {
   }
 
   // Import logic
-  void importTasksFromText(String text, {String? sourceRuleId}) {
+  void importTasksFromText(String text, {String? sourceRuleId, DateTime? targetDate}) {
+    final dateToUse = targetDate ?? _selectedDate;
     final lines = text.split('\n');
     String? currentCategory;
     
@@ -653,7 +702,7 @@ class TaskProvider with ChangeNotifier {
         final newTask = Task(
           title: line,
           category: currentCategory,
-          date: _selectedDate, // Add to currently selected date
+          date: dateToUse, // Add to target date
           status: TaskStatus.todo,
           sourceRuleId: sourceRuleId,
         );
@@ -680,7 +729,7 @@ class TaskProvider with ChangeNotifier {
         final placeholder = Task(
           title: "placeholder",
           category: category,
-          date: _selectedDate,
+          date: dateToUse,
           status: TaskStatus.todo, // Status doesn't matter much as it's filtered
           isCategoryPlaceholder: true,
         );
@@ -688,19 +737,72 @@ class TaskProvider with ChangeNotifier {
       }
     });
     
-    // Update Display Order
+    // Update Display Order (For target date)
+    final dateKey = _getDateKey(dateToUse);
+    if (!_dailyDisplayOrders.containsKey(dateKey)) {
+        _dailyDisplayOrders[dateKey] = [];
+    }
+    final currentOrder = _dailyDisplayOrders[dateKey]!;
+
     // Uncategorized tasks go to TOP (reversed so first line is top)
     for (var taskId in addedTaskIds.reversed) {
-       _homeDisplayOrder.insert(0, taskId);
+       currentOrder.insert(0, taskId);
     }
     
     // Categories go to BOTTOM (if new)
     for (var catId in addedCategories) {
-       if (!_homeDisplayOrder.contains(catId)) {
-          _homeDisplayOrder.add(catId);
+       if (!currentOrder.contains(catId)) {
+          currentOrder.add(catId);
        }
     }
+    
+    _saveTasks();
+    notifyListeners();
+  }
 
+  void forceApplyRule(TaskRule rule) {
+    // 1. Remove from _clearedDates if matches
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    final clearedDatesToRemove = <String>[];
+    for (var dateStr in _clearedDates) {
+      try {
+        final parts = dateStr.split('-');
+        final date = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+        
+        if (date.isBefore(today)) continue;
+        
+        // Check if date matches rule active days (1=Mon, 7=Sun)
+        if (rule.activeDays.contains(date.weekday)) {
+          clearedDatesToRemove.add(dateStr);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    
+    _clearedDates.removeAll(clearedDatesToRemove);
+    
+    // 2. Retract old tasks for this rule globally (unmodified only)
+    retractTasksForRule(rule.id);
+    
+    // 3. Apply to relevant loaded dates
+    // Get all distinct dates currently in memory
+    final loadedDates = _tasks.map((t) => DateTime(t.date.year, t.date.month, t.date.day)).toSet();
+    
+    // Also include currently selected date even if empty (so it refreshes UI)
+    final selectedDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+    loadedDates.add(selectedDay);
+    
+    for (var date in loadedDates) {
+      if (date.isBefore(today)) continue;
+      
+      if (rule.activeDays.contains(date.weekday)) {
+        importTasksFromText(rule.content, sourceRuleId: rule.id, targetDate: date);
+      }
+    }
+    
     _saveTasks();
     notifyListeners();
   }
@@ -869,9 +971,11 @@ class TaskProvider with ChangeNotifier {
     _tasks.removeWhere((t) => isSameDay(t.date, _selectedDate));
     _tasks.addAll(finalTasksForDay);
     
-    // 6. Update _homeDisplayOrder
+    // 6. Update display order (For selected date)
+    final currentOrder = _currentDisplayOrder;
+    
     final oldTaskIds = existingTasks.map((t) => "task:${t.id}").toSet();
-    _homeDisplayOrder.removeWhere((id) => oldTaskIds.contains(id));
+    currentOrder.removeWhere((id) => oldTaskIds.contains(id));
     
     List<String> orderedIdsFromText = [];
     Set<String> processedCategories = {};
@@ -889,14 +993,14 @@ class TaskProvider with ChangeNotifier {
        }
     }
     
-    // Remove old entries from _homeDisplayOrder (categories that are being moved/re-added)
-    _homeDisplayOrder.removeWhere((id) => 
+    // Remove old entries from currentOrder (categories that are being moved/re-added)
+    currentOrder.removeWhere((id) => 
         orderedIdsFromText.contains(id) || 
         oldTaskIds.contains(id) 
     );
     
     // Insert new order at top
-    _homeDisplayOrder.insertAll(0, orderedIdsFromText);
+    currentOrder.insertAll(0, orderedIdsFromText);
     
     _saveTasks();
     notifyListeners();
@@ -917,7 +1021,7 @@ class TaskProvider with ChangeNotifier {
       _tasks.map((task) => task.toJson()).toList(),
     );
     await prefs.setString('tasks', encodedData);
-    await prefs.setStringList('homeDisplayOrder', _homeDisplayOrder);
+    await prefs.setString('dailyDisplayOrders', json.encode(_dailyDisplayOrders));
     await prefs.setStringList('clearedDates', _clearedDates.toList());
     await prefs.setString('categoryExpansionStates', json.encode(_categoryExpansionStates));
     
@@ -931,7 +1035,33 @@ class TaskProvider with ChangeNotifier {
       final List<dynamic> decodedData = json.decode(encodedData);
       _tasks = decodedData.map((item) => Task.fromJson(item)).toList();
     }
-    _homeDisplayOrder = prefs.getStringList('homeDisplayOrder') ?? [];
+    
+    // Load daily display orders
+    final String? dailyOrdersData = prefs.getString('dailyDisplayOrders');
+    if (dailyOrdersData != null) {
+       try {
+         final Map<String, dynamic> decoded = json.decode(dailyOrdersData);
+         _dailyDisplayOrders.clear();
+         decoded.forEach((key, value) {
+            if (value is List) {
+              _dailyDisplayOrders[key] = List<String>.from(value);
+            }
+         });
+       } catch (e) {
+         // ignore corruption
+       }
+    } else {
+       // Migration: If we have old 'homeDisplayOrder', apply it to current day?
+       // Or just discard. Discard is safer for "isolation" goal.
+       // But if user has existing setup, it would be nice to keep it for at least today.
+       final oldOrder = prefs.getStringList('homeDisplayOrder');
+       if (oldOrder != null && oldOrder.isNotEmpty) {
+           // Apply to "today" as a fallback so user doesn't lose everything immediately
+           final now = DateTime.now();
+           final key = _getDateKey(now);
+           _dailyDisplayOrders[key] = oldOrder;
+       }
+    }
     
     final savedClearedDates = prefs.getStringList('clearedDates');
     if (savedClearedDates != null) {
@@ -1024,15 +1154,15 @@ class TaskProvider with ChangeNotifier {
     // 2. Remove from tasks list
     _tasks.removeWhere((t) => t.sourceRuleId == ruleId);
     
-    // 3. Cleanup _homeDisplayOrder
-    // We also need to remove empty categories if they were only populated by this rule
-    // But categories in display order are just strings.
-    // If we remove all tasks of a category, that category effectively becomes empty.
-    // However, the "cat:Name" entry might still be in _homeDisplayOrder.
-    // The homeDisplayItems getter handles filtering out categories with no tasks.
-    // But to be clean, we should probably check if we should remove them from display order if they are truly empty.
-    // Let's stick to just removing the task IDs from display order for now.
-    _homeDisplayOrder.removeWhere((item) => taskIdsToRemove.contains(item));
+    // 3. Cleanup display order
+    // We iterate through all daily orders and remove the tasks
+    // Since we know the tasks are being removed, we could find their dates.
+    // But iterating all tasks is expensive if we do it one by one.
+    // Faster: Iterate _dailyDisplayOrders and remove matching task IDs.
+    
+    _dailyDisplayOrders.forEach((dateKey, orderList) {
+       orderList.removeWhere((item) => taskIdsToRemove.contains(item));
+    });
     
     // 4. Update cleared dates
     // If removing these tasks makes a date empty, we should probably mark it as cleared?
@@ -1076,11 +1206,12 @@ class TaskProvider with ChangeNotifier {
        validItemIds.add("task:${t.id}");
      }
      
-     // 2. Reconcile with _homeDisplayOrder
+     // 2. Reconcile with current display order
+     final currentOrder = _currentDisplayOrder;
      final List<dynamic> result = [];
      
      // First, existing items in order
-     for (var id in _homeDisplayOrder) {
+     for (var id in currentOrder) {
        if (validItemIds.contains(id)) {
          if (id.startsWith("cat:")) {
            result.add(id.substring(4)); // Return category name
@@ -1109,14 +1240,14 @@ class TaskProvider with ChangeNotifier {
        try {
          final task = tasksOfDay.firstWhere((t) => t.id == taskId);
          result.insert(0, task);
-         _homeDisplayOrder.insert(0, tId);
+         currentOrder.insert(0, tId);
        } catch (_) {}
     }
      
      // Add new categories to bottom
      for (var cId in newCats) {
         result.add(cId.substring(4));
-        _homeDisplayOrder.add(cId);
+        currentOrder.add(cId);
      }
      
      if (newItems.isNotEmpty) {
@@ -1136,7 +1267,7 @@ class TaskProvider with ChangeNotifier {
     // Get the moved item from the VIEW list
     final item = currentList[oldIndex];
     
-    // Identify its ID in _homeDisplayOrder
+    // Identify its ID in display order
     String itemId;
     if (item is String) {
        itemId = "cat:$item";
@@ -1146,22 +1277,19 @@ class TaskProvider with ChangeNotifier {
        return; 
     }
     
-    // We need to reorder _homeDisplayOrder based on the visible list's move
-    // But _homeDisplayOrder might contain items not currently visible (other days?)
-    // Actually, _homeDisplayOrder contains IDs.
-    // We should reconstruct _homeDisplayOrder to match the new visual order + invisible items.
+    final currentOrder = _currentDisplayOrder;
+
+    // We need to reorder currentOrder based on the visible list's move
+    // But currentOrder might contain items not currently visible (other days?)
+    // No, currentOrder is per-day now. It should only contain items for THIS day.
+    // However, it might contain ghost IDs (deleted tasks not yet cleaned up).
     
-    // 1. Remove itemId from _homeDisplayOrder
-    _homeDisplayOrder.remove(itemId);
+    // 1. Remove itemId from currentOrder
+    currentOrder.remove(itemId);
     
     // 2. Find the insertion point.
     // The visual list is [A, B, C]. We moved A to after B -> [B, A, C].
-    // In _homeDisplayOrder, we need to put A after B.
-    // But what if B is not in _homeDisplayOrder (shouldn't happen)?
-    // Or what if there are invisible items between A and B?
-    // User wants visual order to be persisted.
-    // Simpler approach: Extract all visible IDs in their NEW order.
-    // Then merge with invisible IDs.
+    // In currentOrder, we need to put A after B.
     
     // Construct new visual list
     final newVisualList = [...currentList];
@@ -1174,16 +1302,16 @@ class TaskProvider with ChangeNotifier {
        return "";
     }).toList();
     
-    // Filter _homeDisplayOrder to keep only invisible items
+    // Filter currentOrder to keep only invisible items (ghosts?)
     final Set<String> visibleSet = newVisualIds.toSet();
-    final invisibleItems = _homeDisplayOrder.where((id) => !visibleSet.contains(id)).toList();
+    final invisibleItems = currentOrder.where((id) => !visibleSet.contains(id)).toList();
     
     // Combine: NewVisual + Invisible
-    // (Or should invisible be at bottom? Usually preserve relative order? 
-    // Since we don't know where they were relative to visible ones easily without complex logic,
-    // appending invisible at end is safest to avoid them appearing in weird spots later).
+    final newOrder = [...newVisualIds, ...invisibleItems];
     
-    _homeDisplayOrder = [...newVisualIds, ...invisibleItems];
+    // Update the map list
+    currentOrder.clear();
+    currentOrder.addAll(newOrder);
     
     _saveTasks();
     notifyListeners();

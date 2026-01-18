@@ -32,7 +32,7 @@ class RuleProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void addRule(String content, List<int> activeDays, {String? name}) {
+  TaskRule addRule(String content, List<int> activeDays, {String? name}) {
     final id = const Uuid().v4();
     final ruleName = name ?? '规则#${_rules.length + 1}';
     final newRule = TaskRule(
@@ -43,18 +43,22 @@ class RuleProvider with ChangeNotifier {
     );
     _rules.add(newRule);
     _saveRules();
+    return newRule;
   }
 
-  void updateRule(String id, String content, List<int> activeDays, {String? name}) {
+  TaskRule? updateRule(String id, String content, List<int> activeDays, {String? name}) {
     final index = _rules.indexWhere((r) => r.id == id);
     if (index != -1) {
-      _rules[index] = _rules[index].copyWith(
+      final updatedRule = _rules[index].copyWith(
         name: name ?? _rules[index].name,
         content: content,
         activeDays: activeDays,
       );
+      _rules[index] = updatedRule;
       _saveRules();
+      return updatedRule;
     }
+    return null;
   }
 
   void deleteRule(String id) {
