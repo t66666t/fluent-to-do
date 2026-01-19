@@ -69,7 +69,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     _focusNode = FocusNode();
     _focusNode.addListener(_onFocusChange);
 
-    _controller = AnimationController(vsync: this);
+    _controller = AnimationController.unbounded(vsync: this);
     _heightController = AnimationController(
       vsync: this, 
       duration: const Duration(milliseconds: 300),
@@ -119,13 +119,12 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     // Start from left (-1.0) and move to center (0.0)
     _mode = AnimationMode.slide;
     _isSimulation = false;
-    _controller.duration = const Duration(milliseconds: 350); // Slightly faster
     _animation = Tween<Offset>(
       begin: const Offset(-0.8, 0.0), // Don't start too far out
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic)); // Smoother, no overshoot
     
-    _controller.forward().then((_) {
+    _controller.animateTo(1.0, duration: const Duration(milliseconds: 350)).then((_) {
       if (mounted) {
          Provider.of<TaskProvider>(context, listen: false)
              .clearRecentlyCompleted(widget.task.id);
@@ -226,20 +225,20 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
   // Helper to check if we are running simulation
   bool _isSimulation = false;
 
-  void _runSpringBack() {
+  void _runSpringBack([double velocity = 0.0]) {
     _isSimulation = true;
     _mode = AnimationMode.slide;
     // A nice bouncy spring for return
-    // Adjusted for "silky" feel
+    // Adjusted for "silky" feel with Apple-style parameters
     final simulation = SpringSimulation(
       const SpringDescription(
         mass: 1.0, 
-        stiffness: 120.0, 
-        damping: 20.0, 
+        stiffness: 200.0, 
+        damping: 25.0, 
       ),
       _dragExtent, // Start position (pixels)
       0.0, // End position (pixels)
-      0.0, // Initial velocity
+      velocity, // Initial velocity
       tolerance: const Tolerance(distance: 0.01, velocity: 0.01),
     );
 
@@ -258,8 +257,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
       _mode = AnimationMode.pulse;
     });
     _controller.stop();
-    _controller.duration = const Duration(milliseconds: 300);
-    _controller.forward().then((_) {
+    _controller.value = 0.0;
+    _controller.animateTo(1.0, duration: const Duration(milliseconds: 300)).then((_) {
       if (mounted) {
         setState(() {
            _mode = AnimationMode.none;
@@ -410,7 +409,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                                _tempSteps = widget.task.steps ?? 1;
                              });
                           }
-                          _runSpringBack();
+                          _runSpringBack(details.primaryVelocity ?? 0.0);
 
                         } else if (_dragExtent < -_inProgressThreshold) {
                           // LEFT SWIPE Logic
@@ -429,9 +428,9 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                                  .updateTaskStatus(widget.task.id, newStatus);
                           }
                           
-                          _runSpringBack();
+                          _runSpringBack(details.primaryVelocity ?? 0.0);
                         } else {
-                          _runSpringBack();
+                          _runSpringBack(details.primaryVelocity ?? 0.0);
                         }
                       },
                       onTap: () {
