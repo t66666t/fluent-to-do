@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
 import 'animated_strikethrough.dart';
 import 'scale_button.dart';
+import 'step_progress_badge.dart';
 import 'step_wheel_picker.dart';
 
 enum AnimationMode { slide, vanish, pulse, none }
@@ -42,16 +44,20 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
   AnimationMode _mode = AnimationMode.none;
   
   // Configuration
-  static const double _completeThreshold = 30.0; // Right swipe threshold
-  static const double _inProgressThreshold = 20.0; // Left swipe threshold
+  static const double _advanceThreshold = 24.0; // Right swipe: advance one step/status
+  static const double _configHoldThreshold = _advanceThreshold; // Right swipe: hold to configure steps
+  static const Duration _configHoldDuration = Duration(milliseconds: 420);
+  static const double _leftActionThreshold = 18.0; // Left swipe threshold
+  static const double _maxRightDrag = 54.0;
+  static const double _maxLeftDrag = 42.0;
 
   // Completion "Pop" Animation
   late AnimationController _completionController;
   late Animation<double> _completionScaleAnimation;
+  late AnimationController _completionShineController;
 
   // Haptic feedback state
-  bool _hasVibratedComplete = false;
-  bool _hasVibratedInProgress = false;
+  bool _hasVibratedLeftAction = false;
 
   // Edit Mode
   late TextEditingController _textController;
@@ -61,6 +67,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
   // Step Counter Configuration
   bool _isConfiguringSteps = false;
   int _tempSteps = 1;
+  Timer? _stepConfigHoldTimer;
+  bool _didTriggerStepConfigWhileDragging = false;
 
   @override
   void initState() {
@@ -87,6 +95,11 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
       TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.4), weight: 50),
       TweenSequenceItem(tween: Tween(begin: 1.4, end: 1.0), weight: 50),
     ]).animate(CurvedAnimation(parent: _completionController, curve: Curves.easeOutCubic));
+
+    _completionShineController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    );
 
     _animation = _controller.drive(Tween<Offset>(begin: Offset.zero, end: Offset.zero));
     _heightAnimation = CurvedAnimation(parent: _heightController, curve: Curves.easeInOut);
@@ -190,6 +203,12 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
              _runPulse();
           }
        }
+
+       if (oldWidget.task.status != TaskStatus.completed &&
+           widget.task.status == TaskStatus.completed) {
+         _completionController.forward(from: 0.0);
+         _completionShineController.forward(from: 0.0);
+       }
     }
   }
   
@@ -203,8 +222,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         _isDragging = false;
         _isSimulation = false;
         _mode = AnimationMode.none;
-        _hasVibratedComplete = false;
-        _hasVibratedInProgress = false;
+        _hasVibratedLeftAction = false;
         // Don't reset _isConfiguringSteps here unless we want to close it on update?
         // Maybe keep it open if just status changed?
         // If ID changed, we should reset.
@@ -217,8 +235,10 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     _controller.dispose();
     _heightController.dispose();
     _completionController.dispose();
+    _completionShineController.dispose();
     _textController.dispose();
     _focusNode.dispose();
+    _stepConfigHoldTimer?.cancel();
     super.dispose();
   }
 
@@ -266,6 +286,62 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         });
       }
     });
+  }
+
+  void _scheduleStepConfigHoldIfNeeded() {
+    if (_isConfiguringSteps) return;
+    if (_didTriggerStepConfigWhileDragging) return;
+    if (_dragExtent <= _configHoldThreshold) {
+      _stepConfigHoldTimer?.cancel();
+      _stepConfigHoldTimer = null;
+      return;
+    }
+
+    if (_stepConfigHoldTimer != null) return;
+    _stepConfigHoldTimer = Timer(_configHoldDuration, () {
+      if (!mounted) return;
+      if (!_isDragging) return;
+      if (_dragExtent <= _configHoldThreshold) return;
+      if (_isConfiguringSteps) return;
+      setState(() {
+        _isConfiguringSteps = true;
+        _tempSteps = widget.task.steps ?? 1;
+        _didTriggerStepConfigWhileDragging = true;
+        _isDragging = false;
+      });
+      HapticHelper.medium();
+      _runSpringBack(0.0);
+    });
+  }
+
+  void _advanceTask() {
+    if (_isConfiguringSteps) return;
+    final provider = Provider.of<TaskProvider>(context, listen: false);
+
+    if (widget.task.steps != null) {
+      final total = widget.task.steps ?? 0;
+      final next = widget.task.currentStep + 1;
+      if (total > 0 && next >= total) {
+        HapticHelper.heavy();
+      } else {
+        HapticHelper.selection();
+      }
+      provider.incrementTaskStep(widget.task.id);
+      return;
+    }
+
+    if (widget.task.status == TaskStatus.todo) {
+      HapticHelper.selection();
+      provider.updateTaskStatus(widget.task.id, TaskStatus.inProgress);
+      return;
+    }
+    if (widget.task.status == TaskStatus.inProgress) {
+      HapticHelper.heavy();
+      provider.updateTaskStatus(widget.task.id, TaskStatus.completed);
+      return;
+    }
+
+    HapticHelper.light();
   }
 
   void _showEditStepDialog() {
@@ -334,9 +410,9 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
           } else if (_mode == AnimationMode.pulse) {
              double val = _controller.value;
              if (val < 0.5) {
-                scale = 1.0 + (val * 0.04);
+                scale = 1.0 + (val * 0.06);
              } else {
-                scale = 1.02 - ((val - 0.5) * 0.04);
+                scale = 1.03 - ((val - 0.5) * 0.06);
              }
              currentOffset = 0.0;
           } else if (!_isDragging && _controller.isAnimating) {
@@ -359,10 +435,13 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                     child: GestureDetector(
                       onHorizontalDragStart: (details) {
                         _controller.stop();
+                        _stepConfigHoldTimer?.cancel();
+                        _stepConfigHoldTimer = null;
                         setState(() {
                           _isDragging = true;
                           _dragExtent = currentOffset;
                           _mode = AnimationMode.slide;
+                          _didTriggerStepConfigWhileDragging = false;
                         });
                       },
                       onHorizontalDragUpdate: (details) {
@@ -371,50 +450,61 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                           if (_dragExtent + delta < 0) {
                              delta *= 0.5; 
                           }
-                          _dragExtent += delta;
+                          if (_dragExtent > _maxRightDrag && delta > 0) {
+                            delta *= 0.2;
+                          } else if (_dragExtent < -_maxLeftDrag && delta < 0) {
+                            delta *= 0.2;
+                          }
+                          _dragExtent = (_dragExtent + delta).clamp(-_maxLeftDrag, _maxRightDrag);
 
                           // Haptic feedback logic
-                          if (_dragExtent > _completeThreshold && !_hasVibratedComplete) {
-                             HapticHelper.medium();
-                             _hasVibratedComplete = true;
-                          } else if (_dragExtent <= _completeThreshold && _hasVibratedComplete) {
-                             _hasVibratedComplete = false;
-                          }
-
-                          if (_dragExtent < -_inProgressThreshold && !_hasVibratedInProgress) {
-                             HapticHelper.selection();
-                             _hasVibratedInProgress = true;
-                          } else if (_dragExtent >= -_inProgressThreshold && _hasVibratedInProgress) {
-                             _hasVibratedInProgress = false;
+                          if (_dragExtent < -_leftActionThreshold &&
+                              !_hasVibratedLeftAction) {
+                            HapticHelper.selection();
+                            _hasVibratedLeftAction = true;
+                          } else if (_dragExtent >= -_leftActionThreshold &&
+                              _hasVibratedLeftAction) {
+                            _hasVibratedLeftAction = false;
                           }
                         });
+                        _scheduleStepConfigHoldIfNeeded();
                       },
                       onHorizontalDragEnd: (details) {
+                        _stepConfigHoldTimer?.cancel();
+                        _stepConfigHoldTimer = null;
                         setState(() {
                           _isDragging = false;
-                          _hasVibratedComplete = false;
-                          _hasVibratedInProgress = false;
+                          _hasVibratedLeftAction = false;
                         });
                         
-                        // RIGHT SWIPE Logic
-                        if (_dragExtent > _completeThreshold) {
-                          if (!_hasVibratedComplete) HapticHelper.medium();
-                          
-                          // Toggle Configuration Mode
-                          if (_isConfiguringSteps) {
-                             setState(() { _isConfiguringSteps = false; });
-                          } else {
-                             setState(() {
-                               _isConfiguringSteps = true;
-                               _tempSteps = widget.task.steps ?? 1;
-                             });
+                        if (_dragExtent > _advanceThreshold) {
+                          if (_didTriggerStepConfigWhileDragging) {
+                            _runSpringBack(details.primaryVelocity ?? 0.0);
+                            return;
                           }
+                          if (_isConfiguringSteps) {
+                            setState(() {
+                              _isConfiguringSteps = false;
+                            });
+                            HapticHelper.light();
+                            _runSpringBack(details.primaryVelocity ?? 0.0);
+                            return;
+                          }
+                          _advanceTask();
                           _runSpringBack(details.primaryVelocity ?? 0.0);
+                          return;
+                        }
 
-                        } else if (_dragExtent < -_inProgressThreshold) {
+                        if (_dragExtent < -_leftActionThreshold) {
+                          if (_isConfiguringSteps) {
+                            setState(() {
+                              _isConfiguringSteps = false;
+                            });
+                            HapticHelper.light();
+                            _runSpringBack(details.primaryVelocity ?? 0.0);
+                            return;
+                          }
                           // LEFT SWIPE Logic
-                          if (!_hasVibratedInProgress) HapticHelper.selection();
-                          
                           if (widget.task.steps != null) {
                              // Decrement Step
                              Provider.of<TaskProvider>(context, listen: false)
@@ -429,9 +519,10 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                           }
                           
                           _runSpringBack(details.primaryVelocity ?? 0.0);
-                        } else {
-                          _runSpringBack(details.primaryVelocity ?? 0.0);
+                          return;
                         }
+
+                        _runSpringBack(details.primaryVelocity ?? 0.0);
                       },
                       onTap: () {
                          if (isEditMode) {
@@ -450,7 +541,13 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
 
                          if (widget.task.steps != null) {
                             // Step Logic
-                            HapticHelper.selection();
+                            final total = widget.task.steps ?? 0;
+                            final next = widget.task.currentStep + 1;
+                            if (total > 0 && next >= total) {
+                              HapticHelper.heavy();
+                            } else {
+                              HapticHelper.selection();
+                            }
                             Provider.of<TaskProvider>(context, listen: false)
                                 .incrementTaskStep(widget.task.id);
                             return;
@@ -465,7 +562,6 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                             HapticHelper.heavy();
                             Provider.of<TaskProvider>(context, listen: false)
                                .updateTaskStatus(widget.task.id, TaskStatus.completed);
-                            _completionController.forward(from: 0.0);
                          } else {
                             HapticHelper.selection();
                             Provider.of<TaskProvider>(context, listen: false)
@@ -490,135 +586,176 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     return SizeTransition(
       sizeFactor: _heightAnimation,
       axisAlignment: 0.0,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
         margin: widget.isRoot 
              ? const EdgeInsets.only(bottom: 12, left: 16, right: 16)
              : const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: currentStatus == TaskStatus.completed
+              ? AppTheme.successColor.withValues(alpha: 0.035)
+              : currentStatus == TaskStatus.inProgress
+                  ? AppTheme.primaryColor.withValues(alpha: 0.028)
+                  : Colors.white,
           borderRadius: BorderRadius.circular(widget.isRoot ? 16 : 12),
+          border: Border.all(
+            color: currentStatus == TaskStatus.completed
+                ? AppTheme.successColor.withValues(alpha: 0.14)
+                : currentStatus == TaskStatus.inProgress
+                    ? AppTheme.primaryColor.withValues(alpha: 0.12)
+                    : Colors.transparent,
+            width: 1,
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+              color: (currentStatus == TaskStatus.completed
+                      ? AppTheme.successColor
+                      : currentStatus == TaskStatus.inProgress
+                          ? AppTheme.primaryColor
+                          : Colors.black)
+                  .withValues(alpha: currentStatus == TaskStatus.todo ? 0.05 : 0.08),
+              blurRadius: currentStatus == TaskStatus.todo ? 10 : 14,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
-        child: Row(
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            SizedBox(
-               width: 24, 
-               height: 24,
-               child: Center(
-                  child: _buildStatusIndicator(currentStatus),
-               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: _isEditingText
-                        ? TextField(
-                            key: const ValueKey('editing'),
-                            controller: _textController,
-                            focusNode: _focusNode,
-                            onSubmitted: (_) => _saveTitle(),
-                            onTapOutside: (_) => _saveTitle(),
-                            style: AppTheme.bodyMedium.copyWith(
-                              color: AppTheme.textPrimary,
-                              decoration: TextDecoration.none,
-                            ),
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                              border: InputBorder.none,
-                            ),
-                          )
-                        : Row(
-                              key: const ValueKey('text'),
-                              mainAxisSize: MainAxisSize.min, // Use min size to wrap text tightly
-                              children: [
-                                Flexible( // Allow wrapping if needed, but here we want strikethrough to fit text width
-                                  child: AnimatedStrikethrough(
-                                    active: currentStatus == TaskStatus.completed,
-                                    color: AppTheme.textSecondary,
-                                    child: AnimatedDefaultTextStyle(
-                                      duration: const Duration(milliseconds: 200),
-                                      style: AppTheme.bodyMedium.copyWith(
-                                        color: currentStatus == TaskStatus.completed
-                                            ? AppTheme.textSecondary
-                                            : AppTheme.textPrimary,
-                                        decoration: TextDecoration.none,
-                                      ),
-                                      child: Text(
-                                        widget.task.title,
+            Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Center(
+                    child: _buildStatusIndicator(currentStatus),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: _isEditingText
+                            ? TextField(
+                                key: const ValueKey('editing'),
+                                controller: _textController,
+                                focusNode: _focusNode,
+                                onSubmitted: (_) => _saveTitle(),
+                                onTapOutside: (_) => _saveTitle(),
+                                style: AppTheme.bodyMedium.copyWith(
+                                  color: AppTheme.textPrimary,
+                                  decoration: TextDecoration.none,
+                                ),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  border: InputBorder.none,
+                                ),
+                              )
+                            : Row(
+                                key: const ValueKey('text'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: AnimatedStrikethrough(
+                                      active: currentStatus == TaskStatus.completed,
+                                      color: AppTheme.textSecondary,
+                                      child: AnimatedDefaultTextStyle(
+                                        duration: const Duration(milliseconds: 200),
+                                        style: AppTheme.bodyMedium.copyWith(
+                                          color: currentStatus == TaskStatus.completed
+                                              ? AppTheme.textSecondary
+                                              : AppTheme.textPrimary,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                        child: Text(
+                                          widget.task.title,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
+                      ),
+                      if (widget.showCategory && widget.task.category != null) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.backgroundColor,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            widget.task.category!,
+                            style: AppTheme.bodySmall.copyWith(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (widget.showCategory && widget.task.category != null) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.backgroundColor,
-                        borderRadius: BorderRadius.circular(4),
+                ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    return ClipRect(
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(1.0, 0.0),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: FadeTransition(
+                          opacity: animation,
+                          child: SizeTransition(
+                            sizeFactor: animation,
+                            axis: Axis.horizontal,
+                            axisAlignment: -1.0,
+                            child: child,
+                          ),
+                        ),
                       ),
-                      child: Text(
-                        widget.task.category!,
-                        style: AppTheme.bodySmall.copyWith(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            
-            // Step Counter UI
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              switchInCurve: Curves.easeOutCubic, // Smoother expansion
-              switchOutCurve: Curves.easeInCubic, // Smoother collapse
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                // Combine Slide and Fade for "Apple-style" reveal
-                return ClipRect(
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(1.0, 0.0), // Slide from right
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: FadeTransition(
-                      opacity: animation,
-                      child: SizeTransition(
-                        sizeFactor: animation,
-                        axis: Axis.horizontal,
-                        axisAlignment: -1.0, // Anchor left, expand right
-                        child: child,
-                      ),
-                    ),
-                  ),
-                );
-              },
-              child: _isConfiguringSteps
-                  ? SizedBox(
-                      height: 32, // Enforce fixed height to match badge
-                      child: _buildStepConfigRow(),
-                    )
-                  : (widget.task.steps != null
+                    );
+                  },
+                  child: _isConfiguringSteps
                       ? SizedBox(
-                          height: 32, // Enforce fixed height
-                          child: _buildStepBadge(),
+                          height: 24,
+                          child: _buildStepConfigRow(),
                         )
-                      : const SizedBox.shrink()),
+                      : (widget.task.steps != null
+                          ? SizedBox(
+                              height: 24,
+                              child: _buildStepBadge(currentStatus),
+                            )
+                          : const SizedBox.shrink()),
+                ),
+              ],
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedBuilder(
+                  animation: _completionShineController,
+                  builder: (context, _) {
+                    if (!_completionShineController.isAnimating) {
+                      return const SizedBox.shrink();
+                    }
+                    return CustomPaint(
+                      painter: _CompletionShinePainter(
+                        progress: _completionShineController.value,
+                        tint: AppTheme.successColor,
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
           ],
         ),
@@ -630,7 +767,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     return Container(
       key: const ValueKey('config_row'),
       margin: const EdgeInsets.only(left: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
         color: AppTheme.textSecondary.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(24),
@@ -641,6 +778,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
           // 1. Step Wheel Picker (iOS Style)
           StepWheelPicker(
             initialValue: _tempSteps,
+            diameter: 24,
             onChanged: (newValue) {
               setState(() {
                 _tempSteps = newValue;
@@ -708,7 +846,7 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     required Color color,
   }) {
     return Padding(
-      padding: const EdgeInsets.all(5.0),
+      padding: const EdgeInsets.all(3.0),
       child: Icon(
         icon,
         size: 18,
@@ -717,43 +855,16 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildStepBadge() {
+  Widget _buildStepBadge(TaskStatus currentStatus) {
     return Padding(
       key: const ValueKey('step_badge'),
       padding: const EdgeInsets.only(left: 8),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutBack,
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: AppTheme.primaryColor.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-          border:
-              Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3)),
-        ),
-        alignment: Alignment.center,
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          transitionBuilder: (Widget child, Animation<double> animation) {
-            return ScaleTransition(
-              scale: animation,
-              child: FadeTransition(
-                opacity: animation,
-                child: child,
-              ),
-            );
-          },
-          child: Text(
-            '${widget.task.currentStep}',
-            key: ValueKey<int>(widget.task.currentStep),
-            style: TextStyle(
-              color: AppTheme.primaryColor,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-            ),
-          ),
-        ),
+      child: StepProgressBadge(
+        status: currentStatus,
+        currentStep: widget.task.currentStep,
+        totalSteps: widget.task.steps ?? 0,
+        size: 24,
+        borderRadius: BorderRadius.circular(6),
       ),
     );
   }
@@ -787,19 +898,131 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     }
 
     return ScaleTransition(
-      scale: status == TaskStatus.completed 
-          ? _completionScaleAnimation 
+      scale: status == TaskStatus.completed
+          ? _completionScaleAnimation
           : const AlwaysStoppedAnimation(1.0),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-        width: 12,
-        height: 12,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
+      child: SizedBox(
+        width: 16,
+        height: 16,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            if (status == TaskStatus.completed)
+              AnimatedBuilder(
+                animation: _completionController,
+                builder: (context, _) {
+                  return CustomPaint(
+                    painter: _CompletionRipplePainter(
+                      progress: Curves.easeOutCubic.transform(_completionController.value),
+                      color: AppTheme.successColor,
+                    ),
+                    size: const Size(16, 16),
+                  );
+                },
+              ),
+          ],
         ),
       ),
     );
+  }
+}
+
+class _CompletionRipplePainter extends CustomPainter {
+  final double progress;
+  final Color color;
+
+  const _CompletionRipplePainter({
+    required this.progress,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final t = progress.clamp(0.0, 1.0);
+    final radius = (size.shortestSide / 2) * (0.85 + 0.65 * t);
+    final opacity = (1.0 - t).clamp(0.0, 1.0);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..color = color.withValues(alpha: 0.55 * opacity);
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CompletionRipplePainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.color != color;
+  }
+}
+
+class _CompletionShinePainter extends CustomPainter {
+  final double progress;
+  final Color tint;
+
+  const _CompletionShinePainter({
+    required this.progress,
+    required this.tint,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = progress.clamp(0.0, 1.0);
+    final rect = Offset.zero & size;
+    final bandWidth = size.width * 0.28;
+    final startX = -bandWidth + (size.width + bandWidth * 2) * t;
+
+    final path = Path()
+      ..moveTo(startX, 0)
+      ..lineTo(startX + bandWidth, 0)
+      ..lineTo(startX + bandWidth * 0.7, size.height)
+      ..lineTo(startX - bandWidth * 0.3, size.height)
+      ..close();
+
+    final paint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+        colors: [
+          Colors.white.withValues(alpha: 0.0),
+          Colors.white.withValues(alpha: 0.20),
+          tint.withValues(alpha: 0.08),
+          Colors.white.withValues(alpha: 0.0),
+        ],
+        stops: const [0.0, 0.35, 0.7, 1.0],
+      ).createShader(rect)
+      ..blendMode = BlendMode.plus;
+
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
+    canvas.drawPath(path, paint);
+
+    final sparklePaint = Paint()..blendMode = BlendMode.plus;
+    for (int i = 0; i < 6; i++) {
+      final phase = (t * 1.35 + i * 0.18) % 1.0;
+      final x = size.width * (0.18 + 0.64 * phase);
+      final y = size.height * (0.22 + 0.56 * ((i % 3) / 2));
+      final r = 1.2 + 1.8 * (1.0 - (phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+      final a = 0.10 * (1.0 - (phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+      sparklePaint.color = Colors.white.withValues(alpha: a);
+      canvas.drawCircle(Offset(x, y), r, sparklePaint);
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _CompletionShinePainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.tint != tint;
   }
 }
