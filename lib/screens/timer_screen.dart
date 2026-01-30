@@ -594,23 +594,13 @@ class _TimerScreenState extends State<TimerScreen> with TickerProviderStateMixin
     return SizedBox(
       height: 96,
       child: Center(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (Widget child, Animation<double> animation) {
-            return FadeTransition(
-              opacity: animation,
-              child: child,
-            );
-          },
-          child: Text(
-            timeStr,
-            key: ValueKey<String>(timeStr),
-            style: TextStyle(
-              color: provider.currentStyle.textColor,
-              fontSize: 52,
-              fontWeight: FontWeight.w300,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+        child: Text(
+          timeStr,
+          style: TextStyle(
+            color: provider.currentStyle.textColor,
+            fontSize: 52,
+            fontWeight: FontWeight.w300,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),
