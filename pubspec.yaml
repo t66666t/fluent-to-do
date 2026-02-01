@@ -39,6 +39,8 @@ dependencies:
   provider: ^6.1.5+1
   table_calendar: ^3.2.0
   shared_preferences: ^2.5.3
+  wakelock_plus: ^1.2.10
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:
@@ -99,3 +101,16 @@ flutter_launcher_icons:
   ios: true
   image_path: "fluenttodologo.png"
   min_sdk_android: 21
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "fluenttodologo.png"
+  windows:
+    generate: true
+    image_path: "fluenttodologo.png"
+  macos:
+    generate: true
+    image_path: "fluenttodologo.png"
+  linux:
+    generate: true
+    image_path: "fluenttodologo.png"

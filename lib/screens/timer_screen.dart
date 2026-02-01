@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../providers/timer_provider.dart';
 import '../utils/haptic_helper.dart';
@@ -596,11 +597,12 @@ class _TimerScreenState extends State<TimerScreen> with TickerProviderStateMixin
       child: Center(
         child: Text(
           timeStr,
-          style: TextStyle(
+          style: GoogleFonts.inter(
             color: provider.currentStyle.textColor,
-            fontSize: 52,
-            fontWeight: FontWeight.w300,
+            fontSize: 56,
+            fontWeight: FontWeight.w700,
             fontFeatures: const [FontFeature.tabularFigures()],
+            letterSpacing: -2,
           ),
         ),
       ),

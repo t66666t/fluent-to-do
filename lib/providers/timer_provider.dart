@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../utils/haptic_helper.dart';
 
 enum TimerMode { stopwatch, countdown, exam }
@@ -120,6 +121,14 @@ class TimerProvider with ChangeNotifier {
     return _currentDuration.inMilliseconds / _initialDuration.inMilliseconds;
   }
 
+  Future<void> _syncWakeLock() async {
+    if (_state == TimerState.running) {
+      await WakelockPlus.enable();
+    } else {
+      await WakelockPlus.disable();
+    }
+  }
+
   void setMode(TimerMode mode) {
     if (_mode == mode) return;
 
@@ -135,6 +144,7 @@ class TimerProvider with ChangeNotifier {
     // 4. Restore state from cache
     _restoreFromCache(_mode);
     
+    _syncWakeLock();
     notifyListeners();
     _saveState();
   }
@@ -319,6 +329,7 @@ class TimerProvider with ChangeNotifier {
     _startDurationVal = _currentDuration;
     
     HapticHelper.medium();
+    _syncWakeLock();
     notifyListeners();
     
     _timer?.cancel();
@@ -334,6 +345,7 @@ class TimerProvider with ChangeNotifier {
     _state = TimerState.paused;
     _timer?.cancel();
     HapticHelper.light();
+    _syncWakeLock();
     notifyListeners();
     _saveState();
   }
@@ -351,6 +363,7 @@ class TimerProvider with ChangeNotifier {
 
     _state = TimerState.idle;
     _resetDurationForMode();
+    _syncWakeLock();
     notifyListeners();
     _saveState();
   }
@@ -393,7 +406,7 @@ class TimerProvider with ChangeNotifier {
       _currentDuration = _initialDuration;
     } else if (_mode == TimerMode.exam) {
       // Keep exam duration
-      _currentDuration = _initialDuration;
+      _currentDuration = _isExamCountUp ? Duration.zero : _initialDuration;
     }
   }
 
@@ -457,6 +470,7 @@ class TimerProvider with ChangeNotifier {
     // Restore current mode state
     _restoreFromCache(_mode);
 
+    _syncWakeLock();
     notifyListeners();
   }
 
@@ -506,6 +520,7 @@ class TimerProvider with ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
+    WakelockPlus.disable();
     super.dispose();
   }
 }
