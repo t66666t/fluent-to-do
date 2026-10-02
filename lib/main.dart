@@ -4,6 +4,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'providers/task_provider.dart';
 import 'providers/rule_provider.dart';
 import 'providers/timer_provider.dart';
+import 'providers/fixed_work_provider.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,6 +27,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => RuleProvider()),
         ChangeNotifierProvider(create: (_) => TimerProvider()),
+        ChangeNotifierProvider(create: (_) => FixedWorkProvider()),
         ChangeNotifierProxyProvider<RuleProvider, TaskProvider>(
           create: (_) => TaskProvider(),
           update: (_, ruleProvider, taskProvider) =>

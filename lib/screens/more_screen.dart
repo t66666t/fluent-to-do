@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/rule_management_dialog.dart';
 import '../utils/haptic_helper.dart';
+import 'fixed_work_screen.dart';
 
 /// More标签页 - 提供额外功能和设置的入口
 /// 
@@ -68,9 +69,10 @@ class MoreScreen extends StatelessWidget {
                   subtitle: '管理固定工作模板',
                   onTap: () {
                     HapticHelper.light();
-                    // TODO: 导航到固定工作管理页面
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('固定工作功能即将推出')),
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const FixedWorkScreen(),
+                      ),
                     );
                   },
                 ),
