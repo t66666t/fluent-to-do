@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
@@ -10,6 +11,7 @@ import 'animated_strikethrough.dart';
 import 'scale_button.dart';
 import 'step_progress_badge.dart';
 import 'step_wheel_picker.dart';
+import 'task_detail_sheet.dart';
 
 enum AnimationMode { slide, vanish, pulse, none }
 
@@ -534,13 +536,9 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                             return;
                          }
                          
-                         // If configuring steps, maybe close? Or ignore?
-                         // User says "Click cancel button or Swipe Right again or Back key".
-                         // Doesn't say Tap closes it. I'll leave it open on tap.
                          if (_isConfiguringSteps) return;
 
                          if (widget.task.steps != null) {
-                            // Step Logic
                             final total = widget.task.steps ?? 0;
                             final next = widget.task.currentStep + 1;
                             if (total > 0 && next >= total) {
@@ -567,6 +565,15 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                             Provider.of<TaskProvider>(context, listen: false)
                                .updateTaskStatus(widget.task.id, TaskStatus.todo);
                          }
+                      },
+                      onLongPress: () {
+                         HapticHelper.medium();
+                         showModalBottomSheet(
+                           context: context,
+                           isScrollControlled: true,
+                           backgroundColor: Colors.transparent,
+                           builder: (context) => TaskDetailSheet(task: widget.task),
+                         );
                       },
                       child: _buildCardContent(),
                     ),
@@ -675,6 +682,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                                         ),
                                         child: Text(
                                           widget.task.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                     ),
@@ -702,6 +711,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
+                // 紧凑的截止日期和逾期徽标（右侧，单行高度）
+                _buildCompactBadges(),
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
                   switchInCurve: Curves.easeOutCubic,
@@ -865,6 +876,144 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         totalSteps: widget.task.steps ?? 0,
         size: 24,
         borderRadius: BorderRadius.circular(6),
+      ),
+    );
+  }
+
+  /// 构建紧凑的徽标（截止日期、逾期、固定工作）- 真·单行高度
+  Widget _buildCompactBadges() {
+    final showDueDate = context.watch<TaskProvider>().showDueDateInList;
+    final badges = <Widget>[];
+    
+    // 固定工作徽标（优先显示）
+    if (widget.task.isFixedWork) {
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: AppTheme.fixedWorkColorLight,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.timer_outlined,
+                size: 12,
+                color: AppTheme.fixedWorkColor,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                widget.task.fixedWorkDurationText,
+                style: const TextStyle(
+                  color: AppTheme.fixedWorkColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    // 逾期标签（始终显示，即使设置隐藏了截止日期）
+    if (widget.task.isOverdue) {
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: AppTheme.overdueColorLight,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.warning_amber,
+                size: 12,
+                color: AppTheme.overdueColor,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                '逾期',
+                style: const TextStyle(
+                  color: AppTheme.overdueColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // 截止日期显示（仅当设置启用且有截止日期且未逾期时）
+    else if (showDueDate && widget.task.dueDate != null) {
+      final dueDate = widget.task.dueDate!;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+      final diff = dueDay.difference(today).inDays;
+      
+      String dueDateText;
+      if (diff == 0) {
+        dueDateText = '今天';
+      } else if (diff == 1) {
+        dueDateText = '明天';
+      } else if (diff <= 7) {
+        dueDateText = '$diff天';
+      } else {
+        dueDateText = DateFormat('M/d').format(dueDate);
+      }
+      
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.schedule,
+                size: 12,
+                color: Colors.grey.shade600,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                dueDateText,
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    if (badges.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (int i = 0; i < badges.length; i++) ...[
+            badges[i],
+            if (i < badges.length - 1) const SizedBox(width: 4),
+          ],
+        ],
       ),
     );
   }

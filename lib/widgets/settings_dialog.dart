@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
-import 'rule_management_dialog.dart';
 
 class SettingsDialog extends StatelessWidget {
   final VoidCallback? onClose;
@@ -78,28 +77,12 @@ class SettingsDialog extends StatelessWidget {
                               },
                             ),
                             const Divider(height: 1, indent: 20, endIndent: 20, color: Colors.black12),
-                            _buildActionItem(
-                              context,
-                              title: '默认任务规则',
-                              onTap: () {
-                                HapticHelper.light();
-                                Navigator.of(context).push(
-                                  PageRouteBuilder(
-                                    opaque: false,
-                                    pageBuilder: (ctx, anim, secAnim) => const RuleManagementDialog(),
-                                    transitionsBuilder: (ctx, anim, secAnim, child) {
-                                      return FadeTransition(
-                                        opacity: anim,
-                                        child: ScaleTransition(
-                                          scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-                                            CurvedAnimation(parent: anim, curve: Curves.easeOutQuart),
-                                          ),
-                                          child: child,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                );
+                            _buildSwitchItem(
+                              title: '列表中显示截止日期',
+                              value: provider.showDueDateInList,
+                              onChanged: (val) {
+                                HapticHelper.selection();
+                                provider.setShowDueDateInList(val);
                               },
                             ),
                             const Divider(height: 1, indent: 20, endIndent: 20, color: Colors.black12),

@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'fixed_work.dart';
 
 enum TaskStatus {
   todo,
@@ -17,6 +18,10 @@ class Task {
   final String? sourceRuleId;
   final int? steps;
   final int currentStep;
+  final DateTime? dueDate;
+  final DateTime? completedAt;
+  final String? fixedWorkTemplateId;
+  final List<Stage>? fixedWorkStages;  // 阶段快照
 
   Task({
     String? id,
@@ -29,8 +34,36 @@ class Task {
     this.sourceRuleId,
     this.steps,
     this.currentStep = 0,
+    this.dueDate,
+    this.completedAt,
+    this.fixedWorkTemplateId,
+    this.fixedWorkStages,
   })  : id = id ?? const Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
+  
+  /// 检查是否为固定工作任务
+  bool get isFixedWork => fixedWorkTemplateId != null && fixedWorkStages != null;
+  
+  /// 获取固定工作的总时长（秒）
+  int get fixedWorkTotalDuration {
+    if (fixedWorkStages == null) return 0;
+    return fixedWorkStages!.fold(0, (sum, stage) => sum + stage.duration);
+  }
+  
+  /// 获取固定工作的总时长文本
+  String get fixedWorkDurationText {
+    final seconds = fixedWorkTotalDuration;
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    
+    if (hours > 0) {
+      return '${hours}h${minutes}m';
+    } else if (minutes > 0) {
+      return '${minutes}m';
+    } else {
+      return '${seconds}s';
+    }
+  }
 
   Task copyWith({
     String? title,
@@ -43,6 +76,12 @@ class Task {
     int? steps,
     bool clearSteps = false,
     int? currentStep,
+    DateTime? dueDate,
+    bool clearDueDate = false,
+    DateTime? completedAt,
+    bool clearCompletedAt = false,
+    String? fixedWorkTemplateId,
+    List<Stage>? fixedWorkStages,
   }) {
     return Task(
       id: id,
@@ -55,7 +94,57 @@ class Task {
       sourceRuleId: clearSourceRuleId ? null : (sourceRuleId ?? this.sourceRuleId),
       steps: clearSteps ? null : (steps ?? this.steps),
       currentStep: currentStep ?? this.currentStep,
+      dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
+      completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
+      fixedWorkTemplateId: fixedWorkTemplateId ?? this.fixedWorkTemplateId,
+      fixedWorkStages: fixedWorkStages ?? this.fixedWorkStages,
     );
+  }
+  
+  /// 检查任务是否逾期（派生状态，不修改 TaskStatus）
+  /// 逾期 = 未完成 && 有截止日期 && 今天已过截止日期
+  bool get isOverdue {
+    if (status == TaskStatus.completed || dueDate == null) {
+      return false;
+    }
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dueDay = DateTime(dueDate!.year, dueDate!.month, dueDate!.day);
+    return today.isAfter(dueDay);
+  }
+  
+  /// 获取任务的活动日期（activeDate）用于列表挂载
+  /// - 无截止日期：使用 date
+  /// - 有截止日期且未完成：clamp(今天, date..due) 或今天如果已经逾期
+  /// - 已完成：使用 completedAt 的日期
+  DateTime get activeDate {
+    if (status == TaskStatus.completed && completedAt != null) {
+      final c = completedAt!;
+      return DateTime(c.year, c.month, c.day);
+    }
+    
+    if (dueDate == null) {
+      return DateTime(date.year, date.month, date.day);
+    }
+    
+    // 有截止日期且未完成
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final startDay = DateTime(date.year, date.month, date.day);
+    final dueDay = DateTime(dueDate!.year, dueDate!.month, dueDate!.day);
+    
+    // 如果今天在 startDay 之前，使用 startDay
+    if (today.isBefore(startDay)) {
+      return startDay;
+    }
+    
+    // 如果今天在 dueDay 之后（逾期），使用今天
+    if (today.isAfter(dueDay)) {
+      return today;
+    }
+    
+    // 否则使用今天（在范围内）
+    return today;
   }
 
   // Convert to JSON
@@ -71,10 +160,14 @@ class Task {
       'sourceRuleId': sourceRuleId,
       'steps': steps,
       'currentStep': currentStep,
+      'dueDate': dueDate?.toIso8601String(),
+      'completedAt': completedAt?.toIso8601String(),
+      'fixedWorkTemplateId': fixedWorkTemplateId,
+      'fixedWorkStages': fixedWorkStages?.map((s) => s.toJson()).toList(),
     };
   }
 
-  // Create from JSON
+  // Create from JSON (兼容旧数据)
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
       id: json['id'],
@@ -87,6 +180,12 @@ class Task {
       sourceRuleId: json['sourceRuleId'],
       steps: json['steps'],
       currentStep: json['currentStep'] ?? 0,
+      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
+      completedAt: json['completedAt'] != null ? DateTime.parse(json['completedAt']) : null,
+      fixedWorkTemplateId: json['fixedWorkTemplateId'],
+      fixedWorkStages: json['fixedWorkStages'] != null
+          ? (json['fixedWorkStages'] as List).map((s) => Stage.fromJson(s)).toList()
+          : null,
     );
   }
 }
