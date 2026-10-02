@@ -21,7 +21,13 @@ void main() async {
 
 class MyApp extends StatefulWidget {
   final int initialIndex;
-  const MyApp({super.key, this.initialIndex = 0});
+  final bool enableAutoLoadDemo;
+  
+  const MyApp({
+    super.key,
+    this.initialIndex = 0,
+    this.enableAutoLoadDemo = true,
+  });
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -31,10 +37,12 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    // 延迟加载示例数据，确保 Provider 已初始化
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _autoLoadDemoDataIfNeeded(context);
-    });
+    // 延迟加载示例数据，确保 Provider 已初始化（测试中禁用）
+    if (widget.enableAutoLoadDemo) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _autoLoadDemoDataIfNeeded(context);
+      });
+    }
   }
 
   @override

@@ -14,7 +14,11 @@ import 'package:fluent_todo/main.dart';
 void main() {
   testWidgets('App builds smoke test', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
-    await tester.pumpWidget(const MyApp(initialIndex: 0));
+    // Disable auto-load demo data in tests
+    await tester.pumpWidget(const MyApp(
+      initialIndex: 0,
+      enableAutoLoadDemo: false,
+    ));
     await tester.pumpAndSettle();
 
     expect(find.text('我的任务'), findsOneWidget);
