@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/rule_management_dialog.dart';
 import '../utils/haptic_helper.dart';
+import '../utils/demo_data_loader.dart';
+import '../providers/task_provider.dart';
+import '../providers/rule_provider.dart';
+import '../providers/fixed_work_provider.dart';
 import 'fixed_work_screen.dart';
 
 /// More标签页 - 提供额外功能和设置的入口
@@ -92,10 +97,7 @@ class MoreScreen extends StatelessWidget {
                   subtitle: '体验完整功能',
                   onTap: () {
                     HapticHelper.light();
-                    // TODO: 实现示例数据加载
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('示例数据加载功能即将推出')),
-                    );
+                    _showDemoDataOptions(context);
                   },
                 ),
               ],
@@ -210,6 +212,125 @@ class MoreScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+  /// 显示示例数据加载选项
+  void _showDemoDataOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                '加载示例数据',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.add, color: Colors.blue),
+              title: const Text('追加到现有数据'),
+              subtitle: const Text('保留当前任务，添加示例数据'),
+              onTap: () {
+                Navigator.pop(context);
+                _loadDemoData(context, clearExisting: false);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.orange),
+              title: const Text('清空并加载'),
+              subtitle: const Text('删除所有现有数据，加载全新示例'),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmClearAndLoad(context);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 确认清空并加载
+  void _confirmClearAndLoad(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认清空'),
+        content: const Text('这将删除所有现有任务、规则和模板。确定要继续吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _loadDemoData(context, clearExisting: true);
+            },
+            child: const Text(
+              '确定',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 加载示例数据
+  Future<void> _loadDemoData(BuildContext context, {required bool clearExisting}) async {
+    HapticHelper.heavy();
+
+    // 显示加载提示
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('正在加载示例数据...'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+
+    final taskProvider = context.read<TaskProvider>();
+    final ruleProvider = context.read<RuleProvider>();
+    final fixedWorkProvider = context.read<FixedWorkProvider>();
+
+    try {
+      await DemoDataLoader.loadDemoData(
+        taskProvider,
+        ruleProvider,
+        fixedWorkProvider,
+        clearExisting: clearExisting,
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('示例数据加载成功！'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('加载失败：$e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }
 
