@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'todo_screen.dart';
 import 'timer_screen.dart';
+import 'more_screen.dart';
 import '../providers/task_provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
@@ -29,7 +30,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _currentIndex = widget.initialIndex;
+    // Clamp index to valid range [0..2]
+    _currentIndex = widget.initialIndex.clamp(0, 2);
   }
   
   @override
@@ -46,6 +48,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _persistCurrentTab();
+    }
+  }
+  
+  void _onTabTapped(int index) {
+    if (_currentIndex != index) {
+      HapticHelper.selection();
+      setState(() {
+        _currentIndex = index;
+      });
       _persistCurrentTab();
     }
   }
@@ -158,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isDeleteMode = taskProvider.isDeleteMode;
     final isEditMode = taskProvider.isEditMode;
     
-    // Determine Styles based on active tab
+    // Timer tab uses dark bottom bar only when index==1; More stays light
     final bool isTimerTab = _currentIndex == 1;
     final timerStyle = timerProvider.currentStyle;
     
@@ -189,24 +201,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         color: scaffoldBgColor,
         child: Scaffold(
           backgroundColor: Colors.transparent, // Use AnimatedContainer background
-          body: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (Widget child, Animation<double> animation) {
-               return FadeTransition(
-                 opacity: animation,
-                 child: child,
-               );
-            },
-            child: _currentIndex == 0 
-                ? Scaffold(
-                    key: const ValueKey('todo_scaffold'),
-                    backgroundColor: Colors.transparent,
-                    appBar: _buildTodoAppBar(context, taskProvider),
-                    body: const TodoScreen(key: ValueKey('todo')),
-                  )
-                : const TimerScreen(key: ValueKey('timer')),
+          body: IndexedStack(
+            index: _currentIndex,
+            children: [
+              // To-Do Tab (index 0)
+              Scaffold(
+                backgroundColor: Colors.transparent,
+                appBar: _buildTodoAppBar(context, taskProvider),
+                body: const TodoScreen(),
+              ),
+              // Timer Tab (index 1)
+              const TimerScreen(),
+              // More Tab (index 2)
+              const MoreScreen(),
+            ],
           ),
           bottomNavigationBar: AnimatedContainer(
             duration: const Duration(milliseconds: 500),
@@ -235,15 +243,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               child: BottomNavigationBar(
                 currentIndex: _currentIndex,
-                onTap: (index) {
-                  if (_currentIndex != index) {
-                    HapticHelper.selection();
-                    setState(() {
-                      _currentIndex = index;
-                    });
-                    _persistCurrentTab();
-                  }
-                },
+                onTap: _onTabTapped,
                 backgroundColor: Colors.transparent, // Handled by AnimatedContainer
                 elevation: 0,
                 selectedItemColor: navBarSelectedColor,
@@ -267,6 +267,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       child: Icon(_currentIndex == 1 ? Icons.timer : Icons.timer_outlined),
                     ),
                     label: '计时',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Icon(_currentIndex == 2 ? Icons.more_horiz : Icons.more_horiz_outlined),
+                    ),
+                    label: '更多',
                   ),
                 ],
               ),

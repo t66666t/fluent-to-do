@@ -60,6 +60,9 @@ class TaskProvider with ChangeNotifier {
 
   bool _vibrationEnabled = true;
   bool get vibrationEnabled => _vibrationEnabled;
+  
+  bool _showDueDateInList = true;
+  bool get showDueDateInList => _showDueDateInList;
 
   void setAutoCollapseCategory(bool value) {
     _autoCollapseCategory = value;
@@ -76,6 +79,12 @@ class TaskProvider with ChangeNotifier {
   void setVibrationEnabled(bool value) {
     _vibrationEnabled = value;
     HapticHelper.enabled = value;
+    _saveSettings();
+    notifyListeners();
+  }
+  
+  void setShowDueDateInList(bool value) {
+    _showDueDateInList = value;
     _saveSettings();
     notifyListeners();
   }
@@ -309,14 +318,16 @@ class TaskProvider with ChangeNotifier {
     await prefs.setBool('autoCollapseCategory', _autoCollapseCategory);
     await prefs.setBool('hideFutureTasksInCalendar', _hideFutureTasksInCalendar);
     await prefs.setBool('vibrationEnabled', _vibrationEnabled);
+    await prefs.setBool('showDueDateInList', _showDueDateInList);
   }
 
 
   List<Task> get tasks => _tasks;
 
+  /// 获取指定日期的任务（使用 activeDate 逻辑）
   List<Task> getTasksForDay(DateTime date) {
     return _tasks.where((task) {
-      return isSameDay(task.date, date);
+      return isSameDay(task.activeDate, date);
     }).toList();
   }
 
@@ -419,19 +430,28 @@ class TaskProvider with ChangeNotifier {
     final index = _tasks.indexWhere((t) => t.id == id);
     if (index != -1) {
       if (status == TaskStatus.completed && _tasks[index].status != TaskStatus.completed) {
-         // It's a completion event.
-         // Just mark recently completed for bottom list animation.
-         // We don't use _animatingOutTasks here because this method is generic.
-         // The specific "Simultaneous" animation is triggered by completeTaskWithAnimation.
+         // It's a completion event - record completedAt timestamp
          _recentlyCompletedTaskIds.add(id);
+         _tasks[index] = _tasks[index].copyWith(
+           status: status,
+           completedAt: DateTime.now(),
+           clearSourceRuleId: true,
+         );
+      } else if (status != TaskStatus.completed && _tasks[index].status == TaskStatus.completed) {
+         // Uncompleting - clear completedAt
+         _recentlyCompletedTaskIds.remove(id);
+         _tasks[index] = _tasks[index].copyWith(
+           status: status,
+           clearCompletedAt: true,
+           clearSourceRuleId: true,
+         );
       } else {
         _recentlyCompletedTaskIds.remove(id);
+        _tasks[index] = _tasks[index].copyWith(
+          status: status,
+          clearSourceRuleId: true,
+        );
       }
-
-      _tasks[index] = _tasks[index].copyWith(
-        status: status,
-        clearSourceRuleId: true, // User modification detaches from rule
-      );
       _saveTasks();
       notifyListeners();
     }
@@ -636,13 +656,30 @@ class TaskProvider with ChangeNotifier {
         // 2. Mark for bottom animation
         _recentlyCompletedTaskIds.add(id);
 
-        // 3. Update Real Task to completed
-        _tasks[index] = task.copyWith(status: TaskStatus.completed);
+        // 3. Update Real Task to completed with timestamp
+        _tasks[index] = task.copyWith(
+          status: TaskStatus.completed,
+          completedAt: DateTime.now(),
+        );
         
         // 4. Save and Notify
         _saveTasks();
         notifyListeners();
       }
+    }
+  }
+  
+  /// 更新任务的截止日期
+  void updateTaskDueDate(String id, DateTime? dueDate) {
+    final index = _tasks.indexWhere((t) => t.id == id);
+    if (index != -1) {
+      _tasks[index] = _tasks[index].copyWith(
+        dueDate: dueDate,
+        clearDueDate: dueDate == null,
+        clearSourceRuleId: true,
+      );
+      _saveTasks();
+      notifyListeners();
     }
   }
 
@@ -1086,6 +1123,7 @@ class TaskProvider with ChangeNotifier {
     _autoCollapseCategory = prefs.getBool('autoCollapseCategory') ?? true;
     _hideFutureTasksInCalendar = prefs.getBool('hideFutureTasksInCalendar') ?? true;
     _vibrationEnabled = prefs.getBool('vibrationEnabled') ?? true;
+    _showDueDateInList = prefs.getBool('showDueDateInList') ?? true;
     HapticHelper.enabled = _vibrationEnabled;
     
     _tasksLoaded = true;
