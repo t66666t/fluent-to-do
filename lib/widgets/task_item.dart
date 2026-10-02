@@ -682,6 +682,8 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
                                         ),
                                         child: Text(
                                           widget.task.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                     ),
@@ -889,22 +891,22 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppTheme.fixedWorkColorLight,
             borderRadius: BorderRadius.circular(4),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.timer_outlined,
                 size: 12,
-                color: Colors.blue.shade700,
+                color: AppTheme.fixedWorkColor,
               ),
               const SizedBox(width: 2),
               Text(
                 widget.task.fixedWorkDurationText,
-                style: TextStyle(
-                  color: Colors.blue.shade700,
+                style: const TextStyle(
+                  color: AppTheme.fixedWorkColor,
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
@@ -922,22 +924,22 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: Colors.amber.shade100,
+            color: AppTheme.overdueColorLight,
             borderRadius: BorderRadius.circular(4),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.warning_amber,
                 size: 12,
-                color: Colors.amber.shade700,
+                color: AppTheme.overdueColor,
               ),
               const SizedBox(width: 2),
               Text(
                 '逾期',
-                style: TextStyle(
-                  color: Colors.amber.shade700,
+                style: const TextStyle(
+                  color: AppTheme.overdueColor,
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
@@ -1006,7 +1008,12 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
       padding: const EdgeInsets.only(left: 4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: badges,
+        children: [
+          for (int i = 0; i < badges.length; i++) ...[
+            badges[i],
+            if (i < badges.length - 1) const SizedBox(width: 4),
+          ],
+        ],
       ),
     );
   }

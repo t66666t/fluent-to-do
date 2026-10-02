@@ -9,6 +9,12 @@ class AppTheme {
   static const Color successColor = Color(0xFF34C759); // System Green
   static const Color warningColor = Color(0xFFFF9500); // System Orange (used for in-progress sometimes)
   static const Color errorColor = Color(0xFFFF3B30); // System Red
+  
+  // Feature-specific colors
+  static const Color overdueColor = Color(0xFFFFCC00); // Amber for overdue tasks
+  static const Color overdueColorLight = Color(0xFFFFF9E6); // Light amber background
+  static const Color fixedWorkColor = Color(0xFF007AFF); // Blue for fixed work
+  static const Color fixedWorkColorLight = Color(0xFFE5F2FF); // Light blue background
 
   static const TextStyle titleLarge = TextStyle(
     fontFamily: '.SF Pro Display',

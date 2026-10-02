@@ -171,18 +171,18 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.amber.shade100,
+              color: AppTheme.overdueColorLight,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Row(
+            child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.warning_amber, size: 16, color: Colors.amber.shade700),
-                const SizedBox(width: 4),
+                Icon(Icons.warning_amber, size: 16, color: AppTheme.overdueColor),
+                SizedBox(width: 4),
                 Text(
                   '逾期',
                   style: TextStyle(
-                    color: Colors.amber.shade700,
+                    color: AppTheme.overdueColor,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -433,8 +433,8 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
             if (day.isAfter(dueDay) || _isSameDay(day, dueDay)) {
               return Center(
                 child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.amber.shade50,
+                  decoration: const BoxDecoration(
+                    color: AppTheme.overdueColorLight,
                     shape: BoxShape.circle,
                   ),
                   width: 40,
@@ -442,7 +442,7 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
                   alignment: Alignment.center,
                   child: Text(
                     '${day.day}',
-                    style: TextStyle(color: Colors.amber.shade700),
+                    style: const TextStyle(color: AppTheme.overdueColor),
                   ),
                 ),
               );
@@ -531,7 +531,7 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
         const SizedBox(height: 12),
         Container(
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppTheme.fixedWorkColorLight,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -541,21 +541,21 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
                 return Column(
                   children: [
                     if (index > 0)
-                      Divider(height: 1, indent: 16, endIndent: 16, color: Colors.blue.shade100),
+                      const Divider(height: 1, indent: 16, endIndent: 16, color: AppTheme.fixedWorkColor),
                     ListTile(
                       dense: true,
                       leading: Container(
                         width: 32,
                         height: 32,
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade100,
+                        decoration: const BoxDecoration(
+                          color: AppTheme.fixedWorkColor,
                           shape: BoxShape.circle,
                         ),
                         child: Center(
                           child: Text(
                             '${index + 1}',
-                            style: TextStyle(
-                              color: Colors.blue.shade700,
+                            style: const TextStyle(
+                              color: Colors.white,
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
                             ),
@@ -576,14 +576,14 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
                                 ? Icons.circle
                                 : Icons.timelapse,
                             size: 14,
-                            color: Colors.blue.shade600,
+                            color: AppTheme.fixedWorkColor,
                           ),
                           const SizedBox(width: 4),
                           Text(
                             stage.durationText,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 13,
-                              color: Colors.blue.shade700,
+                              color: AppTheme.fixedWorkColor,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -597,13 +597,13 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
                 padding: const EdgeInsets.all(12),
                 child: Row(
                   children: [
-                    Icon(Icons.timer, size: 16, color: Colors.blue.shade700),
+                    const Icon(Icons.timer, size: 16, color: AppTheme.fixedWorkColor),
                     const SizedBox(width: 4),
                     Text(
                       '总计：${widget.task.fixedWorkDurationText}',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 14,
-                        color: Colors.blue.shade700,
+                        color: AppTheme.fixedWorkColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
