@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'fixed_work.dart';
 
 enum TaskStatus {
   todo,
@@ -19,6 +20,8 @@ class Task {
   final int currentStep;
   final DateTime? dueDate;
   final DateTime? completedAt;
+  final String? fixedWorkTemplateId;
+  final List<Stage>? fixedWorkStages;  // 阶段快照
 
   Task({
     String? id,
@@ -33,8 +36,34 @@ class Task {
     this.currentStep = 0,
     this.dueDate,
     this.completedAt,
+    this.fixedWorkTemplateId,
+    this.fixedWorkStages,
   })  : id = id ?? const Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
+  
+  /// 检查是否为固定工作任务
+  bool get isFixedWork => fixedWorkTemplateId != null && fixedWorkStages != null;
+  
+  /// 获取固定工作的总时长（秒）
+  int get fixedWorkTotalDuration {
+    if (fixedWorkStages == null) return 0;
+    return fixedWorkStages!.fold(0, (sum, stage) => sum + stage.duration);
+  }
+  
+  /// 获取固定工作的总时长文本
+  String get fixedWorkDurationText {
+    final seconds = fixedWorkTotalDuration;
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    
+    if (hours > 0) {
+      return '${hours}h${minutes}m';
+    } else if (minutes > 0) {
+      return '${minutes}m';
+    } else {
+      return '${seconds}s';
+    }
+  }
 
   Task copyWith({
     String? title,
@@ -51,6 +80,8 @@ class Task {
     bool clearDueDate = false,
     DateTime? completedAt,
     bool clearCompletedAt = false,
+    String? fixedWorkTemplateId,
+    List<Stage>? fixedWorkStages,
   }) {
     return Task(
       id: id,
@@ -65,6 +96,8 @@ class Task {
       currentStep: currentStep ?? this.currentStep,
       dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
       completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
+      fixedWorkTemplateId: fixedWorkTemplateId ?? this.fixedWorkTemplateId,
+      fixedWorkStages: fixedWorkStages ?? this.fixedWorkStages,
     );
   }
   
@@ -129,10 +162,12 @@ class Task {
       'currentStep': currentStep,
       'dueDate': dueDate?.toIso8601String(),
       'completedAt': completedAt?.toIso8601String(),
+      'fixedWorkTemplateId': fixedWorkTemplateId,
+      'fixedWorkStages': fixedWorkStages?.map((s) => s.toJson()).toList(),
     };
   }
 
-  // Create from JSON (兼容旧数据，dueDate 和 completedAt 可能不存在)
+  // Create from JSON (兼容旧数据)
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
       id: json['id'],
@@ -147,6 +182,10 @@ class Task {
       currentStep: json['currentStep'] ?? 0,
       dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
       completedAt: json['completedAt'] != null ? DateTime.parse(json['completedAt']) : null,
+      fixedWorkTemplateId: json['fixedWorkTemplateId'],
+      fixedWorkStages: json['fixedWorkStages'] != null
+          ? (json['fixedWorkStages'] as List).map((s) => Stage.fromJson(s)).toList()
+          : null,
     );
   }
 }

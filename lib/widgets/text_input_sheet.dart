@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
+import '../models/fixed_work.dart';
 import '../providers/task_provider.dart';
 import '../providers/rule_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
+import 'fixed_work_template_picker.dart';
 
 class TextInputSheet extends StatefulWidget {
   const TextInputSheet({super.key});
@@ -16,6 +18,7 @@ class TextInputSheet extends StatefulWidget {
 class _TextInputSheetState extends State<TextInputSheet> {
   final TextEditingController _controller = TextEditingController();
   bool _isInit = true;
+  int _lastAtSymbolPosition = -1;
 
   @override
   void didChangeDependencies() {
@@ -109,6 +112,8 @@ class _TextInputSheetState extends State<TextInputSheet> {
                 _buildHelpItem('2. 任务', '直接输入任务名称\n例如：完成报告'),
                 const SizedBox(height: 16),
                 _buildHelpItem('3. 步骤', '任务下一行开头空格加数字\n例如： 5 (表示5个步骤)'),
+                const SizedBox(height: 16),
+                _buildHelpItem('4. 固定工作', '输入 @ 符号选择固定工作模板\n例如：@深度工作'),
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
@@ -201,11 +206,19 @@ class _TextInputSheetState extends State<TextInputSheet> {
             controller: _controller,
             maxLines: 8,
             decoration: const InputDecoration(
-              hintText: '输入任务...\n以 "。" 或 "." 开头的行将作为类别',
+              hintText: '输入任务...\n以 "。" 或 "." 开头的行将作为类别\n输入 @ 引用固定工作模板',
               border: OutlineInputBorder(),
               filled: true,
               fillColor: AppTheme.backgroundColor,
             ),
+            onChanged: (text) {
+              // 检测 @ 符号
+              if (text.endsWith('@')) {
+                final cursorPos = _controller.selection.baseOffset;
+                _lastAtSymbolPosition = cursorPos - 1;
+                _showTemplatePicker();
+              }
+            },
           ),
           const SizedBox(height: 16),
           ElevatedButton(
@@ -228,6 +241,46 @@ class _TextInputSheetState extends State<TextInputSheet> {
           const SizedBox(height: 20),
         ],
       ),
+    );
+  }
+
+  /// 显示固定工作模板选择器
+  void _showTemplatePicker() async {
+    HapticHelper.light();
+    
+    final template = await showModalBottomSheet<FixedWorkTemplate>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const FixedWorkTemplatePicker(),
+    );
+    
+    if (template != null && mounted) {
+      _insertFixedWorkTask(template);
+    }
+  }
+
+  /// 插入固定工作任务
+  void _insertFixedWorkTask(FixedWorkTemplate template) {
+    final text = _controller.text;
+    final atPos = _lastAtSymbolPosition;
+    
+    if (atPos < 0 || atPos >= text.length) {
+      return;
+    }
+    
+    // 移除 @ 符号，插入固定工作任务文本
+    final before = text.substring(0, atPos);
+    final after = text.substring(atPos + 1);
+    
+    // 构建固定工作任务行（标记为固定工作的任务）
+    final fixedWorkLine = '[FW:${template.id}]${template.name}';
+    
+    final newText = before + fixedWorkLine + after;
+    
+    _controller.text = newText;
+    _controller.selection = TextSelection.collapsed(
+      offset: before.length + fixedWorkLine.length,
     );
   }
 }

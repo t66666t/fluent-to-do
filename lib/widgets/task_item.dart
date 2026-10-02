@@ -878,10 +878,43 @@ class _TaskItemState extends State<TaskItem> with TickerProviderStateMixin {
     );
   }
 
-  /// 构建紧凑的徽标（截止日期和逾期标签）- 真·单行高度
+  /// 构建紧凑的徽标（截止日期、逾期、固定工作）- 真·单行高度
   Widget _buildCompactBadges() {
     final showDueDate = context.watch<TaskProvider>().showDueDateInList;
     final badges = <Widget>[];
+    
+    // 固定工作徽标（优先显示）
+    if (widget.task.isFixedWork) {
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.timer_outlined,
+                size: 12,
+                color: Colors.blue.shade700,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                widget.task.fixedWorkDurationText,
+                style: TextStyle(
+                  color: Colors.blue.shade700,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     
     // 逾期标签（始终显示，即使设置隐藏了截止日期）
     if (widget.task.isOverdue) {

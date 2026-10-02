@@ -28,10 +28,12 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => RuleProvider()),
         ChangeNotifierProvider(create: (_) => TimerProvider()),
         ChangeNotifierProvider(create: (_) => FixedWorkProvider()),
-        ChangeNotifierProxyProvider<RuleProvider, TaskProvider>(
+        ChangeNotifierProxyProvider2<RuleProvider, FixedWorkProvider, TaskProvider>(
           create: (_) => TaskProvider(),
-          update: (_, ruleProvider, taskProvider) =>
-              taskProvider!..updateRuleProvider(ruleProvider),
+          update: (_, ruleProvider, fixedWorkProvider, taskProvider) =>
+              taskProvider!
+                ..updateRuleProvider(ruleProvider)
+                ..updateFixedWorkProvider(fixedWorkProvider),
         ),
       ],
       child: MaterialApp(

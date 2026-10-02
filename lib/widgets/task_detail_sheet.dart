@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../models/task.dart';
+import '../models/fixed_work.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/haptic_helper.dart';
@@ -78,6 +79,13 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
                           
                           // 任务信息
                           _buildTaskInfo(),
+                          
+                          // 固定工作阶段信息
+                          if (widget.task.isFixedWork) ...[
+                            const SizedBox(height: 24),
+                            _buildFixedWorkStages(),
+                          ],
+                          
                           const SizedBox(height: 24),
                           
                           // 截止日期设置
@@ -502,5 +510,110 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> {
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Widget _buildFixedWorkStages() {
+    final stages = widget.task.fixedWorkStages;
+    if (stages == null || stages.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '工作阶段',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: [
+              ...List.generate(stages.length, (index) {
+                final stage = stages[index];
+                return Column(
+                  children: [
+                    if (index > 0)
+                      Divider(height: 1, indent: 16, endIndent: 16, color: Colors.blue.shade100),
+                    ListTile(
+                      dense: true,
+                      leading: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade100,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${index + 1}',
+                            style: TextStyle(
+                              color: Colors.blue.shade700,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        stage.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            stage.type == StageType.point
+                                ? Icons.circle
+                                : Icons.timelapse,
+                            size: 14,
+                            color: Colors.blue.shade600,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            stage.durationText,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.blue.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(Icons.timer, size: 16, color: Colors.blue.shade700),
+                    const SizedBox(width: 4),
+                    Text(
+                      '总计：${widget.task.fixedWorkDurationText}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.blue.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

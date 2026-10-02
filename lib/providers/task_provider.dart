@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';import '../models/task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/task.dart';
 import '../models/task_rule.dart';
+import '../models/fixed_work.dart';
 import 'rule_provider.dart';
+import 'fixed_work_provider.dart';
 import '../utils/haptic_helper.dart';
 
 class TaskProvider with ChangeNotifier {
@@ -10,6 +13,7 @@ class TaskProvider with ChangeNotifier {
   DateTime _selectedDate = DateTime.now();
   
   RuleProvider? _ruleProvider;
+  FixedWorkProvider? _fixedWorkProvider;
   
   void updateRuleProvider(RuleProvider ruleProvider) {
     _ruleProvider = ruleProvider;
@@ -17,6 +21,10 @@ class TaskProvider with ChangeNotifier {
     if (_tasksLoaded) {
       _checkAndApplyDefaultRules();
     }
+  }
+  
+  void updateFixedWorkProvider(FixedWorkProvider fixedWorkProvider) {
+    _fixedWorkProvider = fixedWorkProvider;
   }
 
   bool _tasksLoaded = false;
@@ -735,13 +743,34 @@ class TaskProvider with ChangeNotifier {
           }
         }
       } else {
+        // Check if it's a fixed work task reference [FW:templateId]TaskName
+        String? fixedWorkTemplateId;
+        List<Stage>? fixedWorkStages;
+        String taskTitle = line;
+        
+        final fwMatch = RegExp(r'^\[FW:(.+?)\](.+)$').firstMatch(line);
+        if (fwMatch != null && _fixedWorkProvider != null) {
+          fixedWorkTemplateId = fwMatch.group(1);
+          taskTitle = fwMatch.group(2) ?? line;
+          
+          // Find template and get stage snapshot
+          final template = _fixedWorkProvider!.templates
+              .where((t) => t.id == fixedWorkTemplateId)
+              .firstOrNull;
+          if (template != null) {
+            fixedWorkStages = List<Stage>.from(template.stages);
+          }
+        }
+        
         // It's a task
         final newTask = Task(
-          title: line,
+          title: taskTitle,
           category: currentCategory,
-          date: dateToUse, // Add to target date
+          date: dateToUse,
           status: TaskStatus.todo,
           sourceRuleId: sourceRuleId,
+          fixedWorkTemplateId: fixedWorkTemplateId,
+          fixedWorkStages: fixedWorkStages,
         );
         _tasks.add(newTask);
         lastAddedTask = newTask;
@@ -890,10 +919,30 @@ class TaskProvider with ChangeNotifier {
           categoryTaskCount.putIfAbsent(currentCategory, () => 0);
         }
       } else {
+        // Check if it's a fixed work task
+        String? fixedWorkTemplateId;
+        List<Stage>? fixedWorkStages;
+        String taskTitle = line;
+        
+        final fwMatch = RegExp(r'^\[FW:(.+?)\](.+)$').firstMatch(line);
+        if (fwMatch != null && _fixedWorkProvider != null) {
+          fixedWorkTemplateId = fwMatch.group(1);
+          taskTitle = fwMatch.group(2) ?? line;
+          
+          final template = _fixedWorkProvider!.templates
+              .where((t) => t.id == fixedWorkTemplateId)
+              .firstOrNull;
+          if (template != null) {
+            fixedWorkStages = List<Stage>.from(template.stages);
+          }
+        }
+        
         // Task
         final pTask = ParsedTask(
-          title: line,
+          title: taskTitle,
           category: currentCategory,
+          fixedWorkTemplateId: fixedWorkTemplateId,
+          fixedWorkStages: fixedWorkStages,
         );
         parsedItems.add(pTask);
         lastParsedTask = pTask;
@@ -941,13 +990,22 @@ class TaskProvider with ChangeNotifier {
              !usedTaskIds.contains(t.id)
            );
         } else {
-           // Match real task
-           match = existingTasks.firstWhere((t) => 
-             t.title == pTask.title && 
-             t.category == pTask.category && 
-             !t.isCategoryPlaceholder &&
-             !usedTaskIds.contains(t.id)
-           );
+           // Match real task (including fixed work tasks by ID)
+           if (pTask.fixedWorkTemplateId != null) {
+             match = existingTasks.firstWhere((t) => 
+               t.fixedWorkTemplateId == pTask.fixedWorkTemplateId &&
+               t.category == pTask.category && 
+               !t.isCategoryPlaceholder &&
+               !usedTaskIds.contains(t.id)
+             );
+           } else {
+             match = existingTasks.firstWhere((t) => 
+               t.title == pTask.title && 
+               t.category == pTask.category && 
+               !t.isCategoryPlaceholder &&
+               !usedTaskIds.contains(t.id)
+             );
+           }
         }
       } catch (_) {}
       
@@ -997,6 +1055,8 @@ class TaskProvider with ChangeNotifier {
           status: TaskStatus.todo,
           steps: pTask.steps,
           isCategoryPlaceholder: pTask.isCategoryPlaceholder,
+          fixedWorkTemplateId: pTask.fixedWorkTemplateId,
+          fixedWorkStages: pTask.fixedWorkStages,
         );
         finalTasksForDay.add(newTask);
         // assignedId
@@ -1381,11 +1441,15 @@ class ParsedTask {
   int? steps;
   String? assignedId;
   bool isCategoryPlaceholder;
+  String? fixedWorkTemplateId;
+  List<Stage>? fixedWorkStages;
   
   ParsedTask({
     required this.title, 
     this.category, 
     this.steps,
     this.isCategoryPlaceholder = false,
+    this.fixedWorkTemplateId,
+    this.fixedWorkStages,
   });
 }
