@@ -135,9 +135,11 @@ class DemoDataLoader {
   /// 加载任务规则
   static void _loadTaskRules(RuleProvider provider) {
     // 周一到周五的工作日规则
-    final weekdayRule = TaskRule(
-      name: '工作日常规',
-      content: '''。工作
+    // 使用 addRule 方法，它会自动生成 ID 并创建规则
+    // 注意：默认启用状态由 TaskRule 的默认值控制（isEnabled = true）
+    // 如果需要禁用，需要在添加后手动更新
+    provider.addRule(
+      '''。工作
 检查邮件
 团队站会
 项目进展
@@ -145,11 +147,9 @@ class DemoDataLoader {
 。生活
 阅读30分钟
  3''',
-      activeDays: [1, 2, 3, 4, 5], // 周一到周五
-      isActive: false, // 默认不启用，避免自动生成
+      [1, 2, 3, 4, 5], // 周一到周五
+      name: '工作日常规',
     );
-
-    provider.addRule(weekdayRule);
   }
 
   /// 加载示例任务

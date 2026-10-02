@@ -213,7 +213,6 @@ class MoreScreen extends StatelessWidget {
       ),
     );
   }
-}
 
   /// 显示示例数据加载选项
   void _showDemoDataOptions(BuildContext context) {
